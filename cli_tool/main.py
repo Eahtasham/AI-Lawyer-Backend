@@ -38,13 +38,25 @@ def print_response(data):
 
     answer = data.get("answer", "No answer provided.")
     chunks = data.get("chunks", [])
+    council = data.get("council_opinions", [])
+    
+    if council:
+        print("\n" + "="*20 + " COUNCIL DELIBERATIONS " + "="*20)
+        for opinion in council:
+            role = opinion.get("role", "Unknown")
+            model = opinion.get("model", "Unknown")
+            text = opinion.get("opinion", "")
+            print(f"\n[{role}] ({model}):")
+            print("-" * 30)
+            print(text.strip())
+            print("-" * 30)
     
     print("\n" + "="*50)
-    print(f"AI Lawyer: {answer}")
+    print(f"EXECUTIVE SUMMARY (CHAIRMAN'S RULING): {answer}")
     print("="*50)
     
     if chunks:
-        print("\nSources:")
+        print("\nSources (Indian Kanoon):")
         for i, chunk in enumerate(chunks, 1):
             text = chunk.get("text", "").strip()
             # print first 100 chars of source

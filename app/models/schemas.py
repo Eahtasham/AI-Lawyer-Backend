@@ -16,3 +16,4 @@ class ChatResponse(BaseModel):
     answer: str
     chunks: List[ChunkResult]
     llm_model: str
+    council_opinions: List[Dict] = []

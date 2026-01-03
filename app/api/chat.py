@@ -10,7 +10,7 @@ async def chat(request: ChatRequest):
     """Main chat endpoint"""
     try:
         logger.info(f" New chat request: {request.query[:100]}...")
-        response = rag_service.process_query(request.query, request.top_k)
+        response = await rag_service.process_query(request.query, request.top_k)
         logger.info(" Chat response generated")
         return response
     except Exception as e:
