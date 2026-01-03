@@ -1,6 +1,8 @@
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
+    ENVIRONMENT: str = "development"
+
     # Qdrant
     QDRANT_URL: str
     QDRANT_API_KEY: str
