@@ -31,7 +31,7 @@ class RAGService:
             query=query,
             answer=answer,
             chunks=[ChunkResult(**c) for c in chunks],
-            llm_model="AI_Council (Gemini/Llama Mix)",
+            llm_model="AI_Council (Gemini 2.0)",
             council_opinions=council_result.get("council_opinions", [])
         )
 

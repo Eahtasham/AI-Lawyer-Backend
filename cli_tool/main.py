@@ -41,7 +41,7 @@ def print_response(data):
     council = data.get("council_opinions", [])
     
     if council:
-        print("\n" + "="*20 + " COUNCIL DELIBERATIONS " + "="*20)
+        print("\n" + "="*20 + " COUNCIL OPINIONS " + "="*20)
         for opinion in council:
             role = opinion.get("role", "Unknown")
             model = opinion.get("model", "Unknown")
@@ -52,7 +52,7 @@ def print_response(data):
             print("-" * 30)
     
     print("\n" + "="*50)
-    print(f"EXECUTIVE SUMMARY (CHAIRMAN'S RULING): {answer}")
+    print(f"CHAIRMAN'S RULING: {answer}")
     print("="*50)
     
     if chunks:

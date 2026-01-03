@@ -11,7 +11,7 @@ async def test_council():
     print("AI COUNCIL TEST RUNNER")
     print("="*50 + "\n")
     
-    query = "What is the punishment for theft under Indian Law?"
+    query = "what is the legal drinking age in india and what is the age of consent"
     context = """
     [Chunk 1]
     IPC Section 378. Theft.—Whoever, intending to take dishonestly any movable property out of the possession of any person without that person’s consent, moves that property in order to such taking, is said to commit theft.

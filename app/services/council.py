@@ -1,48 +1,74 @@
 import asyncio
+import httpx
 from typing import List, Dict, Any
-from openai import AsyncOpenAI
 from app.config import settings
 from app.logger import logger
 
 class CouncilService:
     """
-    AI Council Service using OpenRouter to orchestrate multiple diverse LLMs.
-    Implements the architecture defined in AI_COUNCIL_ARCHITECTURE.md
+    AI Council Service using Google Gemini API directly.
     """
 
-    # Free Tier Models 
-    MODEL_CONSTITUTIONAL = "meta-llama/llama-3.3-70b-instruct:free"  # High reasoning for complex rights
-    MODEL_STATUTORY = "mistralai/mistral-small-3.1-24b-instruct:free"  # Precise and logical
-    MODEL_CASE_LAW = "nousresearch/hermes-3-llama-3.1-405b:free"  # Massive knowledge base for precedents
-    MODEL_DEVIL = "deepseek/deepseek-r1-0528:free"  # Strong reasoning for alternative views
-    MODEL_CHAIRMAN = "google/gemini-2.0-flash-exp:free"  # 1M context window for synthesis
+    # Gemini Models (Using variants for diversity)
+    MODEL_CONSTITUTIONAL = "gemini-2.0-flash"
+    MODEL_STATUTORY = "gemini-2.0-flash"
+    MODEL_CASE_LAW = "gemini-2.0-flash"
+    MODEL_DEVIL = "gemini-2.5-flash-lite"
+    MODEL_CHAIRMAN = "gemini-2.5-flash" 
 
     def __init__(self):
-        self.api_key = settings.OPENROUTER_API_KEY
-        self.base_url = settings.OPENROUTER_BASE_URL
-        
-        # Rate Limit Protection: Limit concurrency to 2 parallel requests
-        self.semaphore = asyncio.Semaphore(2)
+        self.api_key = settings.GEMINI_API_KEY
+        self.base_url = "https://generativelanguage.googleapis.com/v1beta/models"
         
         if not self.api_key:
-            logger.warning("OPENROUTER_API_KEY not found. Council service will fail if used.")
+            logger.warning("GEMINI_API_KEY not found. Council service will fail.")
 
-        self.client = AsyncOpenAI(
-            api_key=self.api_key,
-            base_url=self.base_url,
-        )
+        logger.info("CouncilService initialized with Google Gemini API")
 
-        logger.info("CouncilService initialized with OpenRouter (Max Concurrency: 2)")
+    async def _call_gemini(self, model: str, system_prompt: str, user_query: str, enable_search: bool = False) -> str:
+        """Helper to call Gemini REST API"""
+        url = f"{self.base_url}/{model}:generateContent?key={self.api_key}"
+        
+        payload = {
+            "contents": [{
+                "parts": [{"text": f"SYSTEM INSTRUCTION: {system_prompt}\n\n{user_query}"}]
+            }],
+             "generationConfig": {
+                "temperature": 0.7
+            }
+        }
+        
+        if enable_search:
+            payload["tools"] = [{"googleSearch": {}}]
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(url, json=payload)
+            if response.status_code != 200:
+                logger.error(f"Gemini API Error ({response.status_code}): {response.text}")
+                response.raise_for_status()
+            data = response.json()
+            return data["candidates"][0]["content"]["parts"][0]["text"]
 
-    async def _get_member_opinion(self, role: str, model: str, system_prompt: str, user_query: str, context: str) -> Dict[str, str]:
+    async def _get_member_opinion(self, role: str, model: str, system_prompt: str, user_query: str, context: str, enable_search: bool = False) -> Dict[str, str]:
         """Async worker to get a single council member's opinion"""
-        async with self.semaphore:
-            # Stagger requests slightly to avoid hitting per-second limits
-            await asyncio.sleep(0.5) 
+        # No rate limiting (semaphore removed)
+        try:
+            logger.info(f"[{role}] Deliberating using {model} (Web Search: {enable_search})...")
             
-            try:
-                logger.info(f"[{role}] Deliberating using {model}...")
+            if enable_search:
+                full_prompt = f"""
+                CONTEXT FROM DATABASE:
+                {context}
+
+                USER QUERY:
+                {user_query}
                 
+                INSTRUCTIONS:
+                1. Check the provided context first.
+                2. If the context is missing relevant details (e.g., specific recent events, case laws), YOU MUST USE THE GOOGLE SEARCH TOOL to find the answer.
+                3. Do not say "I cannot provide analysis". Search the web and provide a summary based on external facts.
+                """
+            else:
                 full_prompt = f"""
                 CONTEXT FROM INDIAN LAWS:
                 {context}
@@ -52,40 +78,27 @@ class CouncilService:
                 
                 Based strictly on the context above, provide your analysis.
                 """
+            
+            # Use the search tool if enabled
+            opinion = await self._call_gemini(model, system_prompt, full_prompt, enable_search=enable_search)
 
-                response = await self.client.chat.completions.create(
-                    model=model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": full_prompt}
-                    ],
-                    temperature=0.7,
-                    extra_headers={
-                        "HTTP-Referer": "https://ai-lawyer-council.com", 
-                        "X-Title": "AI Lawyer Council"
-                    }
-                )
-                
-                opinion = response.choices[0].message.content
-                logger.info(f"[{role}] Opinion submitted.")
-                return {
-                    "role": role,
-                    "model": model,
-                    "opinion": opinion
-                }
+            logger.info(f"[{role}] Opinion submitted.")
+            return {
+                "role": role,
+                "model": model,
+                "opinion": opinion
+            }
 
-            except Exception as e:
-                logger.warning(f"[{role}] Absented due to error: {str(e)}")
-                # Return None to indicate absence
-                return None
+        except Exception as e:
+            logger.warning(f"[{role}] Absented due to error: {str(e)}")
+            return None
 
     async def _get_chairman_ruling(self, query: str, context: str, opinions: List[Dict[str, str]]) -> str:
         """The Chairman synthesizes all opinions into a final answer"""
         valid_opinions = [op for op in opinions if op is not None]
         
         if not valid_opinions:
-            logger.error("[Chairman] No council members present!")
-            return "The AI Council could not convene due to high traffic (Rate Limits). Please try again later."
+            return "The AI Council could not convene due to technical errors."
             
         logger.info(f"[Chairman] Reviewing {len(valid_opinions)} council opinions...")
 
@@ -116,27 +129,14 @@ class CouncilService:
         """
 
         try:
-            response = await self.client.chat.completions.create(
-                model=self.MODEL_CHAIRMAN,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                temperature=0.5,
-                 extra_headers={
-                    "HTTP-Referer": "https://ai-lawyer-council.com",
-                    "X-Title": "AI Lawyer Council"
-                }
-            )
-            return response.choices[0].message.content
+            return await self._call_gemini(self.MODEL_CHAIRMAN, system_prompt, user_prompt)
         except Exception as e:
             logger.error(f"[Chairman] Failed to rule: {str(e)}")
-            return "The Chairman is currently unavailable due to high traffic."
+            return "The Chairman is currently unavailable."
 
     async def deliberate(self, query: str, context: str) -> Dict[str, Any]:
-        """Main entry point: Orchestrate the full council session"""
+        """Main entry point"""
         
-        # 1. Define the Council Members and their System Prompts
         tasks = [
             self._get_member_opinion(
                 role="Constitutional Expert", 
@@ -155,27 +155,24 @@ class CouncilService:
             self._get_member_opinion(
                 role="Case Law Researcher", 
                 model=self.MODEL_CASE_LAW,
-                system_prompt="You are a Case Law specialist. Look for precedents and interpret how courts typically view these scenarios. If no specific case is in context, apply general judicial logic.",
+                system_prompt="You are a Case Law specialist. Look for relevant precedents and court rulings on the web if not in context. Identify landmark judgments.",
                 user_query=query, 
-                context=context
+                context=context,
+                enable_search=True  # ENABLE WEB SEARCH HERE
             ),
             self._get_member_opinion(
                 role="Devil's Advocate", 
                 model=self.MODEL_DEVIL,
-                system_prompt="You are the Devil's Advocate. Your job is to find loopholes, defenses, exceptions, or alternative interpretations that the others might miss. Be critical and skeptical.",
+                system_prompt="You are the Devil's Advocate. Your job is to find loopholes, defenses, exceptions, or alternative interpretations.",
                 user_query=query, 
                 context=context
             )
         ]
 
-        # 2. Parallel Execution (Async but Semaphore limited)
-        logger.info("Council session started. Members deliberating...")
+        logger.info("Council session started (Gemini). Members deliberating...")
         opinions = await asyncio.gather(*tasks)
         
-        # Filter out None values (absent members)
         valid_opinions = [op for op in opinions if op is not None]
-
-        # 3. Chairman's Ruling
         final_answer = await self._get_chairman_ruling(query, context, valid_opinions)
         
         return {
