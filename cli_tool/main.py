@@ -1,82 +1,68 @@
-import httpx
-import sys
 import asyncio
+import sys
+import logging
+from app.services.rag import rag_service
+from app.models.schemas import ChatResponse
 from cli_tool.logger import logger
 
-# Configuration
-API_URL = "http://localhost:8000/api/chat"
+# Configure logging to be less verbose for the chat interface
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
-async def send_chat_message(message: str):
-    """Sends a chat message to the backend and returns the response."""
-    payload = {
-        "query": message,
-        "top_k": 5
-    }
-    
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(API_URL, json=payload)
-            response.raise_for_status()
-            return response.json()
-    except httpx.RequestError as exc:
-        logger.error(f"An error occurred while requesting {exc.request.url!r}.")
-        print(f"\n[ERROR] Connection error: {exc}")
-        return None
-    except httpx.HTTPStatusError as exc:
-        logger.error(f"Error response {exc.response.status_code} while requesting {exc.request.url!r}.")
-        print(f"\n[ERROR] Server returned error: {exc.response.status_code}")
-        return None
-    except Exception as e:
-        logger.error(f"Unexpected error: {str(e)}")
-        print(f"\n[ERROR] Unexpected error: {e}")
-        return None
+def print_separator(char="=", length=50):
+    print(char * length)
 
-def print_response(data):
-    """Pretty prints the chat response."""
+def print_response(data: ChatResponse):
+    """Pretty prints the chat response matches test_council.py style."""
     if not data:
         return
 
-    answer = data.get("answer", "No answer provided.")
-    chunks = data.get("chunks", [])
-    council = data.get("council_opinions", [])
+    answer = data.answer
+    chunks = data.chunks
+    council = data.council_opinions
     
+    # 1. Council Opinions
     if council:
         print("\n" + "="*20 + " COUNCIL OPINIONS " + "="*20)
         for opinion in council:
             role = opinion.get("role", "Unknown")
             model = opinion.get("model", "Unknown")
             text = opinion.get("opinion", "")
+            
+            # Check for Special Power (Direct Ruling) tag in opinions (though usually Chairman handles it)
+            # But here we just print what the council said.
             print(f"\n[{role}] ({model}):")
             print("-" * 30)
             print(text.strip())
             print("-" * 30)
     
-    print("\n" + "="*50)
-    print(f"CHAIRMAN'S RULING: {answer}")
+    # 2. Chairman's Ruling
+    print("\n" + "="*20 + " CHAIRMAN'S RULING " + "="*20)
+    print(f"{answer}")
     print("="*50)
     
+    # 3. Sources
     if chunks:
-        print("\nSources (Indian Kanoon):")
+        print("\n" + "-"*20 + " Sources (Indian Kanoon) " + "-"*20)
         for i, chunk in enumerate(chunks, 1):
-            text = chunk.get("text", "").strip()
-            # print first 100 chars of source
+            text = chunk.text.strip()
+            # print first 150 chars of source
             preview = text[:150] + "..." if len(text) > 150 else text
             print(f"  {i}. {preview}")
-            if chunk.get("metadata"):
-                 print(f"     (Metadata: {chunk['metadata']})")
-    print("\n" + "-"*50 + "\n")
+            if chunk.metadata:
+                 print(f"     (Metadata: {chunk.metadata})")
+    print("\n")
 
 async def chat_loop():
     """Main interactive chat loop."""
-    print("Welcome to the AI Lawyer CLI Chat!")
-    print("Type 'exit', 'quit', or 'q' to end the session.")
-    print(f"Connecting to: {API_URL}\n")
+    print_separator()
+    print("AI LAWYER COUNCIL - CLI INTERFACE")
+    print("Direct Connection to Gemini 2.0 Backend")
+    print_separator()
+    print("Type 'exit', 'quit', or 'q' to end the session.\n")
     
-    logger.info("CLI Chat session started.")
-
     while True:
         try:
-            user_input = input("You: ").strip()
+            user_input = input("YOU: ").strip()
         except EOFError:
             break
             
@@ -87,26 +73,27 @@ async def chat_loop():
             print("Goodbye!")
             break
         
-        logger.info(f"User query: {user_input}")
-        
+        print("\nCalling CouncilService.deliberate()...")
         print("Thinking...", end = "\r")
-        response_data = await send_chat_message(user_input)
         
-        if response_data:
+        try:
+            # DIRECT SERVICE CALL (No HTTP)
+            response = await rag_service.process_query(user_input)
+            
             print(" " * 20, end="\r") # Clear "Thinking..."
-            print_response(response_data)
-            logger.info("Response received and displayed.")
-        else:
-             print(" " * 20, end="\r") # Clear "Thinking..."
+            print_response(response)
+            
+        except Exception as e:
+            print(f"\n[ERROR] Processing failed: {e}")
+            logger.error(f"Error processing query: {e}")
 
-    logger.info("CLI Chat session ended.")
+    print("Session ended.")
 
 def main():
     try:
         asyncio.run(chat_loop())
     except KeyboardInterrupt:
         print("\nGoodbye!")
-        logger.info("CLI Chat session interrupted by user.")
 
 if __name__ == "__main__":
     main()

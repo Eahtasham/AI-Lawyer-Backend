@@ -12,8 +12,8 @@ class CouncilService:
     # Gemini Models (Using variants for diversity)
     MODEL_CONSTITUTIONAL = "gemini-2.0-flash"
     MODEL_STATUTORY = "gemini-2.0-flash"
-    MODEL_CASE_LAW = "gemini-2.0-flash"
-    MODEL_DEVIL = "gemini-2.5-flash-lite"
+    MODEL_CASE_LAW = "gemini-2.5-flash"
+    MODEL_DEVIL = "gemini-2.0-flash"
     MODEL_CHAIRMAN = "gemini-2.5-flash" 
 
     def __init__(self):
@@ -67,6 +67,10 @@ class CouncilService:
                 1. Check the provided context first.
                 2. If the context is missing relevant details (e.g., specific recent events, case laws), YOU MUST USE THE GOOGLE SEARCH TOOL to find the answer.
                 3. Do not say "I cannot provide analysis". Search the web and provide a summary based on external facts.
+                4. SPECIAL INSTRUCTION: If the user query is about a current event, news, or general topic NOT strictly related to established Indian Law statutes (e.g. sports, politics, gossip), start your response with:
+                   "[[NON-LEGAL]]
+                   
+                   [detailed answer based on search results]"
                 """
             else:
                 full_prompt = f"""
@@ -101,6 +105,17 @@ class CouncilService:
             return "The AI Council could not convene due to technical errors."
             
         logger.info(f"[Chairman] Reviewing {len(valid_opinions)} council opinions...")
+
+        # CHECK FOR "SPECIAL POWER" (Short-circuit if non-legal)
+        for op in valid_opinions:
+            if op["role"] == "Case Law Researcher" and "[[NON-LEGAL]]" in op["opinion"]:
+                logger.info(f"[Chairman] Detected non-legal query via Case Law Researcher. Raw opinion length: {len(op['opinion'])}")
+                clean_opinion = op["opinion"].replace("[[NON-LEGAL]]", "").strip()
+                if not clean_opinion:
+                     logger.warning("[Chairman] Cleaned opinion is empty! Falling back to raw opinion.")
+                     clean_opinion = op["opinion"] # Fallback if regex/replace killed it
+                
+                return f"**Special Direct Ruling (Non-Legal Inquiry):**\n\n{clean_opinion}"
 
         opinions_text = "\n\n".join([
             f"=== OPINION FROM {op['role']} ({op['model']}) ===\n{op['opinion']}"
