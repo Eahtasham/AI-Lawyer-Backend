@@ -29,7 +29,7 @@ The system dispatches every user query to four specialized AI agents in parallel
 *   **Language**: Python 3.10+
 *   **LLMs**: Google Gemini 2.0 Flash / 2.5 Flash
 *   **Vector Database**: Qdrant (Managed/Cloud)
-*   **Tools**: Google Custom Search JSON API
+*   **Tools**: Google Search (Built-in via Gemini API)
 
 ## 📦 Setup Instructions
 
@@ -65,10 +65,6 @@ The system dispatches every user query to four specialized AI agents in parallel
     QDRANT_URL=your_qdrant_url
     QDRANT_API_KEY=your_qdrant_key
     QDRANT_COLLECTION=annotated_laws
-    
-    # Google Search (For Case Law Researcher)
-    GOOGLE_SEARCH_API_KEY=your_search_key
-    GOOGLE_CSE_ID=your_cse_id
     ```
 
 5.  **Run the Server**
