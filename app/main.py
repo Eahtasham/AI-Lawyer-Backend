@@ -4,7 +4,7 @@ from app.api.chat import router as chat_router
 from app.logger import logger
 import time
 
-app = FastAPI(title="Legal RAG API", version="1.0.0")
+app = FastAPI(title="Legal RAG API", version="1.5.1")
 
 # CORS
 app.add_middleware(

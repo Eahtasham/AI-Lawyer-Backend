@@ -1,0 +1,19 @@
+name: Keep Alive Backend
+
+on:
+  schedule:
+    # Run every 10 minutes
+    - cron: '*/10 * * * *'
+  workflow_dispatch: # Allows manual triggering
+
+jobs:
+  keep-alive-ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Ping Render Backend
+        run: |
+          echo "Pinging backend to describe instance..."
+          curl -I "https://lawyer-ai-council.onrender.com/health"
