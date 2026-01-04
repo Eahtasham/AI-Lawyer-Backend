@@ -207,7 +207,7 @@ class CouncilService:
         
         # 3. Chairman Ruling
         if not valid_opinions:
-            yield "data: The AI Council could not convene due to technical errors.\n"
+            yield f"data: {json.dumps({'error': 'The AI Council could not convene due to technical errors.'})}\n"
             return
 
         yield "log: Chairman is reviewing all opinions...\n"

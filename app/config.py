@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     ANTHROPIC_API_KEY: str = ""
     
+    # Supabase
+    SUPABASE_URL: str
+    SUPABASE_SERVICE_KEY: str
+
     class Config:
         env_file = ".env"
         extra = "ignore"

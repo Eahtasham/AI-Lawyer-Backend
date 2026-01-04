@@ -4,6 +4,7 @@ from typing import List, Dict
 class ChatRequest(BaseModel):
     query: str
     top_k: int = 5
+    conversation_id: str | None = None
 
 class ChunkResult(BaseModel):
     rank: int
