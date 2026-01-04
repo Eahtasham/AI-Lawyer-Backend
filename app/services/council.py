@@ -67,10 +67,16 @@ class CouncilService:
                 1. Check the provided context first.
                 2. If the context is missing relevant details (e.g., specific recent events, case laws), YOU MUST USE THE GOOGLE SEARCH TOOL to find the answer.
                 3. Do not say "I cannot provide analysis". Search the web and provide a summary based on external facts.
-                4. SPECIAL INSTRUCTION: If the user query is about a current event, news, or general topic NOT strictly related to established Indian Law statutes (e.g. sports, politics, gossip), start your response with:
-                   "[[NON-LEGAL]]
+                4. SPECIAL INSTRUCTION: If the user query is about a current event, news, or general topic NOT strictly related to established Indian Law statutes (e.g. sports, politics, gossip), you MUST:
+                   - Use the Google Search tool to find the answer.
+                   - Start your response with "[[NON-LEGAL]]".
+                   - IMMEDIATELY followed by a detailed answer to the user's query based on your search.
                    
-                   [detailed answer based on search results]"
+                   Example Format:
+                   [[NON-LEGAL]]
+                   According to recent news, the event ...
+                   
+                   WARNING: Do NOT verify if it is legal or not in the text. Just answer the question. Do NOT output the tag alone.
                 """
             else:
                 full_prompt = f"""
@@ -111,9 +117,9 @@ class CouncilService:
             if op["role"] == "Case Law Researcher" and "[[NON-LEGAL]]" in op["opinion"]:
                 logger.info(f"[Chairman] Detected non-legal query via Case Law Researcher. Raw opinion length: {len(op['opinion'])}")
                 clean_opinion = op["opinion"].replace("[[NON-LEGAL]]", "").strip()
-                if not clean_opinion:
-                     logger.warning("[Chairman] Cleaned opinion is empty! Falling back to raw opinion.")
-                     clean_opinion = op["opinion"] # Fallback if regex/replace killed it
+                if len(clean_opinion) < 5:
+                     logger.warning("[Chairman] Cleaned opinion is empty! Ignoring non-legal short-circuit.")
+                     continue
                 
                 return f"**Special Direct Ruling (Non-Legal Inquiry):**\n\n{clean_opinion}"
 
@@ -158,6 +164,70 @@ class CouncilService:
         except Exception as e:
             logger.error(f"[Chairman] Failed to rule: {str(e)}")
             return "The Chairman is currently unavailable."
+
+
+    async def deliberate_stream(self, query: str, context: str):
+        """Streaming entry point for SSE"""
+        
+        # 1. Define member tasks
+        member_prompts = [
+            ("Constitutional Expert", self.MODEL_CONSTITUTIONAL, 
+             "You are a Constitutional Law expert. Analyze the query based on the Constitution of India. Prioritize Fundamental Rights and constitutional validity.", False),
+            ("Statutory Analyst", self.MODEL_STATUTORY,
+             "You are a Black-letter law expert. Focus strictly on the text, definitions, and penalties in the provided Acts (IPC, CrPC, BNS). Be literal and precise.", False),
+            ("Case Law Researcher", self.MODEL_CASE_LAW,
+             "You are a Case Law specialist. Look for relevant precedents and court rulings on the web if not in context. Identify landmark judgments.", True),
+            ("Devil's Advocate", self.MODEL_DEVIL,
+             "You are the Devil's Advocate. Your job is to find loopholes, defenses, exceptions, or alternative interpretations.", False)
+        ]
+
+        tasks = []
+        for role, model, sys_prompt, search in member_prompts:
+            tasks.append(
+                asyncio.create_task(
+                    self._get_member_opinion(role, model, sys_prompt, query, context, enable_search=search)
+                )
+            )
+            # Yield initial log for each member
+            yield f"log: {role} has started review...\n"
+
+        logger.info("[Stream] Council members dispatched.")
+
+        # 2. Wait for members to finish as they complete
+        valid_opinions = []
+        
+        for completed_task in asyncio.as_completed(tasks):
+            result = await completed_task
+            if result:
+                valid_opinions.append(result)
+                # Yield opinion event
+                import json
+                yield f"opinion: {json.dumps(result)}\n"
+                yield f"log: {result['role']} has submitted their opinion.\n"
+        
+        # 3. Chairman Ruling
+        if not valid_opinions:
+            yield "data: The AI Council could not convene due to technical errors.\n"
+            return
+
+        yield "log: Chairman is reviewing all opinions...\n"
+        
+        # We need to capture the Chairman's output. 
+        # Since _get_chairman_ruling is atomic, we can't stream the generation token-by-token 
+        # unless we rewrite it to use streamGenerateContent. 
+        # For now, we'll keep it atomic but yield it as the final chunk.
+        
+        # Reuse existing logic but we need to handle the case where it returns a string
+        # We manually construct the messages again or just call the helper 
+        
+        final_answer = await self._get_chairman_ruling(query, context, valid_opinions)
+        
+        # Yield result
+        # We can stream the text in chunks if we want to simulate typing, but for now just send it.
+        # Format for SSE data: 
+        import json
+        yield f"data: {json.dumps({'answer': final_answer})}\n"
+        yield "log: Session closed.\n"
 
     async def deliberate(self, query: str, context: str) -> Dict[str, Any]:
         """Main entry point"""
