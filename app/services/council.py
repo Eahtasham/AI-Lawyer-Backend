@@ -123,12 +123,22 @@ class CouncilService:
         ])
 
         system_prompt = """You are the Chief Justice and Chairman of the AI Legal Council. 
-        Your goal is to provide the most accurate, balanced, and legally sound answer to the user's query.
+        Your goal is to provide the most accurate, relevant, balanced, concise and legally sound answer to the user's query.
+
+        CRITICAL INSTRUCTIONS - READ CAREFULLY:
+        1. **ABSOLUTELY NO INTRODUCTIONS**: Never say "As the Chief Justice", "I have reviewed...", "The council has deliberated...", or "Here is the ruling".
+        2. **START IMMEDIATELY WITH THE ANSWER**: Begin your response directly with the legal analysis or answer.
+        3. **FORMATTING**: Use Markdown headings (#, ##) to structure the response. separating sections with distinct whitespace.
+        4. **TONE**: authoritative, objective, and direct.
+        5. **CONTEXT**: Focus strictly on INDIAN LAW.
         
-        1. Review the opinions submitted by your council members.
-        2. Resolve any conflicts between them.
-        3. Formulate a final, authoritative response citing specific sections from the context.
-        4. Focus on INDIAN LAW.
+        Example of how NOT to start:
+        "As the Chairman, I have..." (WRONG)
+        "Based on the opinions..." (WRONG)
+        
+        Example of how to start:
+        "**The Law on [Topic]**..." (RIGHT)
+        "Under Section X of the IPC..." (RIGHT)
         """
 
         user_prompt = f"""
@@ -184,7 +194,7 @@ class CouncilService:
             )
         ]
 
-        logger.info("Council session started (Gemini). Members deliberating...")
+        logger.info("Council session started. Members deliberating...")
         opinions = await asyncio.gather(*tasks)
         
         valid_opinions = [op for op in opinions if op is not None]
