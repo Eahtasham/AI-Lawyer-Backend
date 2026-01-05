@@ -14,7 +14,7 @@ class CouncilService:
     MODEL_STATUTORY = "gemini-2.0-flash"
     MODEL_CASE_LAW = "gemini-2.5-flash"
     MODEL_DEVIL = "gemini-2.0-flash"
-    MODEL_CHAIRMAN = "gemini-2.5-flash" 
+    MODEL_CHAIRMAN = "gemini-2.5-pro" 
 
     def __init__(self):
         self.api_key = settings.GEMINI_API_KEY
