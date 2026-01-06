@@ -105,23 +105,35 @@ async def stream_chat(
         try:
             logger.info(f"[Stream] Request from {user_id}: {query}")
             
-            # Use provided conversation_id or create new one
-            conv_id = conversation_id
-            if not conv_id:
-                # Truncate query for title, maybe limit to 50 chars
-                title = query[:50] + "..." if len(query) > 50 else query
-                conv_id = db_service.create_conversation(user_id, title=title)
-            
-            # Log User Message
-            db_service.add_message(conv_id, user_id, "user", query)
-            
-            # Lists to capture full metadata
+            # Lists to capture full metadata (Initialize EARLY)
             stream_logs = []
             stream_chunks = []
             stream_opinions = []
 
-            yield "log: Searching Indian Kanoon Database...\n"
-            stream_logs.append("Searching Indian Kanoon Database...")
+            # Use provided conversation_id or create new one
+            conv_id = conversation_id
+            
+            # Log User Message (with recovery for missing/deleted conversations)
+            try:
+                if not conv_id:
+                     raise ValueError("No ID provided, force creation")
+                db_service.add_message(conv_id, user_id, "user", query)
+            except Exception as e:
+                is_fk_error = "foreign key constraint" in str(e) or "23503" in str(e) 
+                if is_fk_error or not conv_id:
+                    logger.warning(f"[Stream] Conversation {conv_id} missing or invalid. Creating new conversation.")
+                    title = query[:50] + "..." if len(query) > 50 else query
+                    # Force creation with the requested ID to keep Frontend in sync
+                    conv_id = db_service.create_conversation(user_id, title=title, id=conv_id)
+                    # Retry logging user message to new conversation
+                    db_service.add_message(conv_id, user_id, "user", query)
+                else:
+                    raise e
+            
+
+
+            yield "log: Searching SamVidhaan Legal Corpus...\n"
+            stream_logs.append("Searching SamVidhaan Legal Corpus...")
             
             chunks = qdrant_service.search(query, top_k=5)
             

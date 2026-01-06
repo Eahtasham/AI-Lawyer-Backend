@@ -12,13 +12,16 @@ class DatabaseService:
             settings.SUPABASE_SERVICE_KEY
         )
     
-    def create_conversation(self, user_id: str, title: str = "New Conversation") -> str:
+    def create_conversation(self, user_id: str, title: str = "New Conversation", id: str = None) -> str:
         """Creates a new conversation and returns its ID."""
         try:
             data = {
                 "user_id": user_id,
                 "title": title
             }
+            if id:
+                data["id"] = id
+                
             response = self.supabase.table("conversations").insert(data).execute()
             if response.data:
                 return response.data[0]['id']
