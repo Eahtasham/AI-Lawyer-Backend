@@ -49,21 +49,21 @@ class DatabaseService:
             raise
 
     def delete_conversation(self, conversation_id: str, user_id: str) -> bool:
-        """Deletes a conversation and all its messages."""
+        """Soft deletes a conversation by setting is_deleted to True."""
         try:
-             # Verify ownership implicitly by including user_id in the delete condition
+             # Soft delete: set is_deleted = True instead of actually deleting
              response = self.supabase.table("conversations")\
-                .delete()\
+                .update({"is_deleted": True})\
                 .eq("id", conversation_id)\
                 .eq("user_id", user_id)\
                 .execute()
              
-             # Supabase returns the deleted rows. If len > 0, strict success.
+             # Supabase returns the updated rows. If len > 0, success.
              if response.data:
                  return True
              return False
         except Exception as e:
-            logger.error(f"Error deleting conversation: {e}")
+            logger.error(f"Error soft-deleting conversation: {e}")
             raise
 
     def update_conversation(self, conversation_id: str, user_id: str, title: str = None, is_pinned: bool = None) -> bool:

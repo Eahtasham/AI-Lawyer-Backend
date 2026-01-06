@@ -51,7 +51,8 @@ create table if not exists public.conversations (
   title text default 'New Conversation',
   created_at timestamp with time zone default timezone('utc'::text, now()) not null,
   updated_at timestamp with time zone default timezone('utc'::text, now()) not null,
-  is_pinned boolean default false
+  is_pinned boolean default false,
+  is_deleted boolean default false not null
 );
 
 -- 3. Messages (Individual chat items)
@@ -75,8 +76,9 @@ create policy "Users can view own profile" on profiles for select using (auth.ui
 create policy "Users can update own profile" on profiles for update using (auth.uid() = id);
 
 -- Conversations Policies
-create policy "Users can view own conversations" on conversations for select using (auth.uid() = user_id);
+create policy "Users can view own conversations" on conversations for select using (auth.uid() = user_id and is_deleted = false);
 create policy "Users can create own conversations" on conversations for insert with check (auth.uid() = user_id);
+create policy "Users can update own conversations" on conversations for update using (auth.uid() = user_id);
 create policy "Users can delete own conversations" on conversations for delete using (auth.uid() = user_id);
 
 -- Messages Policies
