@@ -230,6 +230,12 @@ async def stream_chat(
                 metadata=metadata
             )
 
+        except asyncio.CancelledError:
+            logger.info(f"[Stream] Client disconnected (cancelled) for {user_id}")
+            # We can optionally save partial state here if desired
+            # For now, just exit gracefully so the background tasks (in council.py) get cancelled via GeneratorExit
+            raise
+
         except Exception as e:
             logger.error(f"Stream error: {e}")
             yield f"data: {{\"error\": \"{str(e)}\"}}\n"
@@ -251,5 +257,7 @@ async def stream_chat(
                 )
             except Exception as save_err:
                  logger.error(f"Failed to save error state: {save_err}")
+        finally:
+            logger.info("[Stream] Generator closed.")
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")

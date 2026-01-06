@@ -222,14 +222,21 @@ class CouncilService:
         # 2. Wait for members to finish as they complete
         valid_opinions = []
         
-        for completed_task in asyncio.as_completed(tasks):
-            result = await completed_task
-            if result:
-                valid_opinions.append(result)
-                # Yield opinion event
-                import json
-                yield f"opinion: {json.dumps(result)}\n"
-                yield f"log: {result['role']} has submitted their opinion.\n"
+        try:
+            for completed_task in asyncio.as_completed(tasks):
+                result = await completed_task
+                if result:
+                    valid_opinions.append(result)
+                    # Yield opinion event
+                    import json
+                    yield f"opinion: {json.dumps(result)}\n"
+                    yield f"log: {result['role']} has submitted their opinion.\n"
+        finally:
+            # ensure all pending tasks are cancelled if we exit early (e.g. generator closed)
+            for t in tasks:
+                 if not t.done():
+                     t.cancel()
+                     logger.info(f"Cancelled pending council task: {t.get_name()}")
         
         # 3. Chairman Ruling
         if not valid_opinions:
