@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SamVidhaan - AI Legal Assistant</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="background-elements">
+        <div class="orb orb-1"></div>
+        <div class="orb orb-2"></div>
+    </div>
+
+    <nav class="navbar">
+        <div class="logo">SamVidhaan<span class="dot">.</span></div>
+        <div class="nav-links desktop-nav">
+            <a href="/docs" target="_blank">API Docs</a>
+            <a href="#features">Features</a>
+            <a href="#contact">Contact</a>
+        </div>
+        <button class="menu-toggle" aria-label="Toggle Menu">
+            <span></span>
+            <span></span>
+            <span></span>
+        </button>
+    </nav>
+
+    <div class="sidebar-overlay"></div>
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <div class="logo">SamVidhaan<span class="dot">.</span></div>
+            <button class="close-sidebar" aria-label="Close Menu">&times;</button>
+        </div>
+        <div class="sidebar-links">
+            <a href="/docs" target="_blank">API Docs</a>
+            <a href="#features">Features</a>
+            <a href="#contact">Contact</a>
+        </div>
+    </aside>
+
+    <main class="hero">
+        <div class="hero-content">
+            <div class="badge">Version <span id="app-version">1.0.0</span></div>
+            <h1>Democratizing Legal Knowledge with <span class="gradient-text">AI</span></h1>
+            <p class="subtitle">An AI-supercharged assistant for understanding Indian law. Navigate the complexities of the constitution and legal acts with ease.</p>
+            
+            <div class="cta-group">
+                <a href="/docs" class="btn btn-primary">Try the API</a>
+                <a href="#about" class="btn btn-secondary">Learn More</a>
+            </div>
+        </div>
+
+        <div class="hero-visual">
+            <div class="glass-card">
+                <div class="card-header">
+                    <div class="circle red"></div>
+                    <div class="circle yellow"></div>
+                    <div class="circle green"></div>
+                </div>
+                <div class="code-preview">
+                    <pre><code><span class="keyword">POST</span> /api/chat
+{
+  <span class="key">"message"</span>: <span class="string">"Explain Article 21"</span>
+}
+
+<span class="comment">// Response</span>
+{
+  <span class="key">"response"</span>: <span class="string">"Article 21 guarantees
+  protection of life and
+  personal liberty..."</span>
+}</code></pre>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <footer class="footer">
+        <p>&copy; <span id="year"></span> SamVidhaan AI. Empowering Justice.</p>
+    </footer>
+
+    <script src="/static/script.js"></script>
+</body>
+</html>
