@@ -9,7 +9,7 @@ app = FastAPI(title="Legal RAG API", version="1.5.1")
 # CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -21,7 +21,9 @@ async def log_requests(request: Request, call_next):
     start_time = time.time()
     
     # Log request
-    logger.info(f"➡️  {request.method} {request.url.path}")
+    auth_header = request.headers.get("Authorization")
+    auth_status = "Auth: YES" if auth_header else "Auth: NO"
+    logger.info(f"➡️  {request.method} {request.url.path} [{auth_status}]")
     
     try:
         response = await call_next(request)

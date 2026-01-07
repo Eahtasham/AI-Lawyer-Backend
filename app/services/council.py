@@ -10,11 +10,11 @@ class CouncilService:
     """
 
     # Gemini Models (Using variants for diversity)
-    MODEL_CONSTITUTIONAL = "gemini-2.0-flash"
-    MODEL_STATUTORY = "gemini-2.0-flash"
+    MODEL_CONSTITUTIONAL = "gemini-2.5-flash"
+    MODEL_STATUTORY = "gemini-2.5-flash"
     MODEL_CASE_LAW = "gemini-2.5-flash"
-    MODEL_DEVIL = "gemini-2.0-flash"
-    MODEL_CHAIRMAN = "gemini-2.5-flash" 
+    MODEL_DEVIL = "gemini-2.5-flash"
+    MODEL_CHAIRMAN = "gemini-2.5-pro" 
 
     def __init__(self):
         self.api_key = settings.GEMINI_API_KEY
@@ -64,19 +64,45 @@ class CouncilService:
                 {user_query}
                 
                 INSTRUCTIONS:
-                1. Check the provided context first.
-                2. If the context is missing relevant details (e.g., specific recent events, case laws), YOU MUST USE THE GOOGLE SEARCH TOOL to find the answer.
-                3. Do not say "I cannot provide analysis". Search the web and provide a summary based on external facts.
-                4. SPECIAL INSTRUCTION: If the user query is about a current event, news, or general topic NOT strictly related to established Indian Law statutes (e.g. sports, politics, gossip), you MUST:
-                   - Use the Google Search tool to find the answer.
-                   - Start your response with "[[NON-LEGAL]]".
-                   - IMMEDIATELY followed by a detailed answer to the user's query based on your search.
-                   
-                   Example Format:
-                   [[NON-LEGAL]]
-                   According to recent news, the event ...
-                   
-                   WARNING: Do NOT verify if it is legal or not in the text. Just answer the question. Do NOT output the tag alone.
+                1. First, classify the USER QUERY into ONE of the following categories:
+
+                A. LEGAL-ANALYSIS
+                    Queries that ask about:
+                    - Indian laws, statutes, acts, rules, regulations
+                    - Court cases, judgments, precedents
+                    - Legal procedures, rights, liabilities, penalties
+                    - Government bills, constitutional provisions, compliance
+                    - Legal interpretation or application
+
+                B. NON-LEGAL
+                    Queries that are NOT asking for legal knowledge, including but not limited to:
+                    - Greetings or conversational messages (e.g., "hello", "hi", "thanks")
+                    - Meta questions about the app, system, or AI (e.g., "what is this app?", "is this better than other legal apps?")
+                    - Comparisons, opinions, or evaluations of products, apps, or services
+                    - General knowledge, casual questions, or informational queries
+                    - Capability questions (e.g., "can you do X?", "what can you help with?")
+                    - Hypothetical, philosophical, or abstract questions not grounded in law
+                    - Current events, news, politics, sports, entertainment, or public discourse
+                    - Small talk or user intent probing
+
+                2. If the query is classified as NON-LEGAL:
+                - IMMEDIATELY BYPASS all legal reasoning, statute analysis, or legal verification.
+                - DO NOT attempt to reinterpret the query as a legal question.
+                - Use the Google Search tool ONLY if external factual information is required.
+                - Start the response with the exact tag: [[NON-LEGAL]]
+                - Then provide a direct, helpful, natural-language response.
+
+                3. If the query is classified as LEGAL-ANALYSIS:
+                - Check the provided CONTEXT first.
+                - If the context lacks required or up-to-date information, use the Google Search tool.
+                - Provide a structured, neutral, legally grounded answer.
+                - Do NOT include the [[NON-LEGAL]] tag.
+
+                4. STRICT RULES:
+                - Classification happens BEFORE any answering.
+                - If a query does not explicitly ask for legal knowledge, it MUST be treated as NON-LEGAL.
+                - Do NOT mention this classification process in your response.
+                - Do NOT output only the tag. Always follow it with an answer.
                 """
             else:
                 full_prompt = f"""
@@ -196,18 +222,25 @@ class CouncilService:
         # 2. Wait for members to finish as they complete
         valid_opinions = []
         
-        for completed_task in asyncio.as_completed(tasks):
-            result = await completed_task
-            if result:
-                valid_opinions.append(result)
-                # Yield opinion event
-                import json
-                yield f"opinion: {json.dumps(result)}\n"
-                yield f"log: {result['role']} has submitted their opinion.\n"
+        try:
+            for completed_task in asyncio.as_completed(tasks):
+                result = await completed_task
+                if result:
+                    valid_opinions.append(result)
+                    # Yield opinion event
+                    import json
+                    yield f"opinion: {json.dumps(result)}\n"
+                    yield f"log: {result['role']} has submitted their opinion.\n"
+        finally:
+            # ensure all pending tasks are cancelled if we exit early (e.g. generator closed)
+            for t in tasks:
+                 if not t.done():
+                     t.cancel()
+                     logger.info(f"Cancelled pending council task: {t.get_name()}")
         
         # 3. Chairman Ruling
         if not valid_opinions:
-            yield "data: The AI Council could not convene due to technical errors.\n"
+            yield f"data: {json.dumps({'error': 'The AI Council could not convene due to technical errors.'})}\n"
             return
 
         yield "log: Chairman is reviewing all opinions...\n"

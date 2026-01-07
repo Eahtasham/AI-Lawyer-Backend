@@ -8,5 +8,5 @@ venv/
 *.log
 .DS_Store
 logs/
-PROMPT*
+*PROMPT*
 frontend/
