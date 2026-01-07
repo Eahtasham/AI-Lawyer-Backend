@@ -90,7 +90,14 @@ class CouncilService:
                 - DO NOT attempt to reinterpret the query as a legal question.
                 - Use the Google Search tool ONLY if external factual information is required.
                 - Start the response with the exact tag: [[NON-LEGAL]]
-                - Then provide a direct, helpful, natural-language response.
+                - Assume the persona of a helpful, expert assistant.
+                - Start the response with the exact tag: [[NON-LEGAL]]
+                - FORMATTING REQUIRED:
+                    - Use **Markdown headings** (##, ###) to structure the response clearly.
+                    - Use **Horizontal Rules** (---) to separate major sections.
+                    - Use **Emojis** (✅, ⚠️, 📌) sparingly to maintain a professional layout. Do not overuse.
+                    - Use **Code Blocks** for specific values, steps, or copyable text.
+                    - Make it look professional, structured, and similar to high-quality AI outputs.
 
                 3. If the query is classified as LEGAL-ANALYSIS:
                 - Check the provided CONTEXT first.
@@ -147,7 +154,7 @@ class CouncilService:
                      logger.warning("[Chairman] Cleaned opinion is empty! Ignoring non-legal short-circuit.")
                      continue
                 
-                return f"**Special Direct Ruling (Non-Legal Inquiry):**\n\n{clean_opinion}"
+                return clean_opinion
 
         opinions_text = "\n\n".join([
             f"=== OPINION FROM {op['role']} ({op['model']}) ===\n{op['opinion']}"
@@ -155,22 +162,27 @@ class CouncilService:
         ])
 
         system_prompt = """You are the Chief Justice and Chairman of the AI Legal Council. 
-        Your goal is to provide the most accurate, relevant, balanced, concise and legally sound answer to the user's query.
+        Your goal is to provide the most accurate, relevant, balanced, specialized, and legally sound answer to the user's query.
 
         CRITICAL INSTRUCTIONS - READ CAREFULLY:
         1. **ABSOLUTELY NO INTRODUCTIONS**: Never say "As the Chief Justice", "I have reviewed...", "The council has deliberated...", or "Here is the ruling".
-        2. **START IMMEDIATELY WITH THE ANSWER**: Begin your response directly with the legal analysis or answer.
-        3. **FORMATTING**: Use Markdown headings (#, ##) to structure the response. separating sections with distinct whitespace.
-        4. **TONE**: authoritative, objective, and direct.
-        5. **CONTEXT**: Focus strictly on INDIAN LAW.
+        2. **START IMMEDIATELY WITH THE ANSWER**: Begin your response directly with the answer.
+        3. **FORMATTING REQUIRED**: 
+            - Use **Markdown headings** (##, ###) to structure the response clearly.
+            - Use **Horizontal Rules** (---) to separate major sections.
+            - Use **Emojis** (✅, ⚠️, ⚖️) very sparingly and only for critical emphasis. Maintain a strictly professional legal tone.
+            - Use **Code Blocks** for specific values, lists of items, or technical steps.
+            - Use **Bold** text for key concepts.
+        4. **TONE**: Authority with modern clarity. Professional, structured, and easy to read. Avoid excessive decoration.
+        5. **CONTEXT**: Focus strictly on INDIAN LAW unless otherwise specified.
         
         Example of how NOT to start:
         "As the Chairman, I have..." (WRONG)
         "Based on the opinions..." (WRONG)
         
         Example of how to start:
-        "**The Law on [Topic]**..." (RIGHT)
-        "Under Section X of the IPC..." (RIGHT)
+        "## The Law on [Topic] ⚖️" (RIGHT)
+        "### Key Provisions 👉" (RIGHT)
         """
 
         user_prompt = f"""
