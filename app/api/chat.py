@@ -93,6 +93,8 @@ async def update_conversation_endpoint(
 async def stream_chat(
     query: str, 
     conversation_id: str = None,
+    context_window: int = 5,
+    web_search: str = "false", # Boolean passed as string query param often
     user_id: str = Depends(get_current_user)
 ):
     """
@@ -113,29 +115,89 @@ async def stream_chat(
             # Use provided conversation_id or create new one
             conv_id = conversation_id
             
-            # Log User Message (with recovery for missing/deleted conversations)
+            # Resolve Web Search Boolean
+            is_web_search_enabled = str(web_search).lower() == "true"
+            # Ensure context_window is within bounds (Treat as turns/pairs, plus current msg)
+            actual_window_size = (max(1, min(50, int(context_window))) * 2) + 1
+
+            # Fetch History FIRST (before adding new message) to check for Regeneration/Retry
+            history_for_check = db_service.get_conversation_history(conv_id, user_id, limit=2) # Get last 2 messages
+            
+            should_add_user_msg = True
+            
+            if history_for_check:
+                last_msg = history_for_check[-1] # List is Chronological (Old -> New), so -1 is Last
+                
+                # REGENERATION DETECTED: Last messsage was Assistant, Prev was User matching current query
+                if last_msg.get('role') == 'assistant' and len(history_for_check) >= 2:
+                    prev_msg = history_for_check[-2]
+                    if prev_msg.get('role') == 'user' and prev_msg.get('content') == query:
+                        logger.info(f"[Stream] Regeneration detected for conv {conv_id}. Deleting last assistant response...")
+                        db_service.delete_message(last_msg['id'])
+                        should_add_user_msg = False # Reuse existing user message
+                
+                # RETRY DETECTED: Last message was User matching current query (AI failed to reply?)
+                elif last_msg.get('role') == 'user' and last_msg.get('content') == query:
+                     logger.info(f"[Stream] Retry detected for conv {conv_id}. Reusing existing user message.")
+                     should_add_user_msg = False
+
+            # Log User Message (only if not deduplicated)
             try:
-                if not conv_id:
-                     raise ValueError("No ID provided, force creation")
-                db_service.add_message(conv_id, user_id, "user", query)
+                if should_add_user_msg:
+                    if not conv_id:
+                         raise ValueError("No ID provided, force creation")
+                    db_service.add_message(conv_id, user_id, "user", query)
             except Exception as e:
+                # Error recovery same as before
                 is_fk_error = "foreign key constraint" in str(e) or "23503" in str(e) 
                 if is_fk_error or not conv_id:
                     logger.warning(f"[Stream] Conversation {conv_id} missing or invalid. Creating new conversation.")
                     title = query[:50] + "..." if len(query) > 50 else query
-                    # Force creation with the requested ID to keep Frontend in sync
                     conv_id = db_service.create_conversation(user_id, title=title, id=conv_id)
-                    # Retry logging user message to new conversation
                     db_service.add_message(conv_id, user_id, "user", query)
                 else:
                     raise e
             
-
+            # Fetch History AGAIN (or refresh) for Context/CQR
+            # We must fetch fresh history because we might have deleted something or added something.
+            history_for_cqr = db_service.get_conversation_history(conv_id, user_id, limit=actual_window_size)
+            
+            # Debug Log for Context verification (Moved Up)
+            logger.info(f"[Context] Fetching last {actual_window_size} messages for conversation {conv_id}")
+            for idx, msg in enumerate(history_for_cqr):
+                 # Sanitize for logging (Windows cp1252 safety)
+                 raw_content = msg.get('content', '')[:50].replace('\n', ' ')
+                 content_preview = raw_content.encode('ascii', 'replace').decode('ascii')
+                 logger.info(f"   {idx+1}. [{msg.get('role')}] {content_preview}...")
+            
+            # --- CONTEXTUAL QUERY REWRITING (CQR) ---
+            rewritten_query = query
+            if history_for_cqr:
+                 yield "log: Analyzing conversation context...\n"
+                 # Exclude the current message we just added from history to avoid confusion
+                 # (Though get_conversation_history might return it if it's already in DB. 
+                 #  Let's trust the rewriter to handle it, or filter it out if needed.
+                 #  Usually history implies "past messages". Logic check: db.add_message was called above.)
+                 # Let's pass the fetched history. The rewriter prompt handles "Latest User Query" separately.
+                 
+                 # Optimization: Filter out the 'user' message we JUST added if it appears in history
+                 # But actually we just want the PAST history. 
+                 # get_conversation_history returns latest Last. 
+                 # If we just added the message, it might be in the list.
+                 # Let's rely on the LLM to understand or just pass it all.
+                 
+                 rewritten_query = await council_service.rewrite_query(query, history_for_cqr)
+                 
+                 if rewritten_query != query:
+                     yield f"log: Contextualized Query: '{rewritten_query}'\n"
+                     stream_logs.append(f"Contextualized Query: '{rewritten_query}'")
+            # ----------------------------------------
 
             yield "log: Searching SamVidhaan Legal Corpus...\n"
             stream_logs.append("Searching SamVidhaan Legal Corpus...")
             
-            chunks = qdrant_service.search(query, top_k=5)
+            # Search using REWRITTEN query
+            chunks = qdrant_service.search(rewritten_query, top_k=5)
             
             if not chunks:
                 stream_logs.append("No relevant documents found.")
@@ -166,17 +228,24 @@ async def stream_chat(
             
             yield f"chunks: {chunks_json}\n"
 
-            # Build context
             context = "\n\n".join([
                 f"[Chunk {c['rank']}]\n{c['text']}\nMetadata: {c['metadata']}"
                 for c in chunks
             ])
             
+            # Reuse the history fetched earlier (history_for_cqr)
+            # This avoids double-fetching and ensures consistency.
+            history_msgs = history_for_cqr
+            
+            # Use "Context Window Size" terminology as requested
+            yield f"log: Restored conversation context (Window Size: {context_window}).\n"
+            stream_logs.append(f"Restored conversation context (Window Size: {context_window}).")
+            
             # 2. Hand over to Council Stream
             yield "log: Convening AI Council...\n"
             stream_logs.append("Convening AI Council...")
             
-            async for event in council_service.deliberate_stream(query, context):
+            async for event in council_service.deliberate_stream(query, context, history_msgs, enable_web_search=is_web_search_enabled):
                 # event is like "data: ... \n" or "log: ... \n" or "opinion: ... \n"
                 clean_event = event.strip()
                 # logger.info(f"Stream Event: {clean_event[:100]}") # Verbose logging

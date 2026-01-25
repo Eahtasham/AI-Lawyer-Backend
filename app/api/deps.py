@@ -11,7 +11,7 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     Verifies the Supabase JWT token and returns the user_id.
     """
     token = credentials.credentials
-    logger.info(f"🔐 Verifying token: {token[:10]}...")
+    logger.info(f"[Auth] Verifying token: {token[:10]}...")
     try:
         # We use the Supabase client to get the user.
         # This verifies the signature and expiration automatically.

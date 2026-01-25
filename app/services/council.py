@@ -122,7 +122,8 @@ class CouncilService:
             return {
                 "role": role,
                 "model": model,
-                "opinion": opinion
+                "opinion": opinion,
+                "web_search_enabled": enable_search
             }
 
         except Exception as e:
@@ -192,19 +193,31 @@ class CouncilService:
             return "The Chairman is currently unavailable."
 
 
-    async def deliberate_stream(self, query: str, context: str):
+    async def deliberate_stream(self, query: str, context: str, chat_history: List[Dict] = [], enable_web_search: bool = True):
         """Streaming entry point for SSE"""
         
+        # Format Chat History for Context
+        history_text = ""
+        if chat_history:
+            history_text = "\nPREVIOUS CONVERSATION HISTORY:\n" + "\n".join([
+                f"{msg['role'].upper()}: {msg['content']}" for msg in chat_history
+            ]) + "\n"
+        
         # 1. Define member tasks
+        # LOGIC CHANGE: If enable_web_search is True, ALL members can search. 
+        # If False, NO ONE can search (Strict Offline).
+        
+        search_flag = enable_web_search
+        
         member_prompts = [
             ("Constitutional Expert", self.MODEL_CONSTITUTIONAL, 
-             "You are a Constitutional Law expert. Analyze the query based on the Constitution of India. Prioritize Fundamental Rights and constitutional validity.", False),
+             f"You are a Constitutional Law expert. Analyze the query based on the Constitution of India. Prioritize Fundamental Rights and constitutional validity.{history_text}", search_flag),
             ("Statutory Analyst", self.MODEL_STATUTORY,
-             "You are a Black-letter law expert. Focus strictly on the text, definitions, and penalties in the provided Acts (IPC, CrPC, BNS). Be literal and precise.", False),
+             f"You are a Black-letter law expert. Focus strictly on the text, definitions, and penalties in the provided Acts (IPC, CrPC, BNS). Be literal and precise.{history_text}", search_flag),
             ("Case Law Researcher", self.MODEL_CASE_LAW,
-             "You are a Case Law specialist. Look for relevant precedents and court rulings on the web if not in context. Identify landmark judgments.", True),
+             f"You are a Case Law specialist. Look for relevant precedents and court rulings on the web if not in context. Identify landmark judgments.{history_text}", search_flag),
             ("Devil's Advocate", self.MODEL_DEVIL,
-             "You are the Devil's Advocate. Your job is to find loopholes, defenses, exceptions, or alternative interpretations.", False)
+             f"You are the Devil's Advocate. Your job is to find loopholes, defenses, exceptions, or alternative interpretations.{history_text}", search_flag)
         ]
 
         tasks = []
@@ -261,6 +274,69 @@ class CouncilService:
         import json
         yield f"data: {json.dumps({'answer': final_answer})}\n"
         yield "log: Session closed.\n"
+
+    async def rewrite_query(self, query: str, history_msgs: List[Dict]) -> str:
+        """
+        Rewrites the user query to be self-contained based on history using Gemini Flash.
+        If history is empty or query is a topic switch, returns original query.
+        """
+        if not history_msgs:
+            return query
+            
+        logger.info(f"[CQR] Rewriting query with {len(history_msgs)} history items...")
+        
+        # Format history as a script
+        history_text = ""
+        for msg in history_msgs:
+            role = "User" if msg.get("role") == "user" else "Assistant"
+            content = msg.get("content", "").replace("\n", " ")
+            history_text += f"[{role}]: {content}\n"
+            
+        system_prompt = """
+        You are an expert Legal Query Resolution system.
+        Your Task: Rewrite the "Latest User Query" to be a fully self-contained question that can be understood without the conversation history.
+
+        Rules for Rewriting:
+        1. Resolve Pronouns: Replace "it", "that", "he", "she", "the act" with the specific entities mentioned in the history (e.g., "Theft", "Section 302", "The accused").
+        2. Preserve Intent: Do NOT change the user's intent. If they ask for a "summary", keep it a "summary".
+        3. Preserve Entities: NEVER alter Case Names, Section Numbers, or Act Names.
+        4. No New Info: Do NOT answer the question. Do NOT hallucinate facts not present in history.
+        5. Topic Change: If the "Latest User Query" is a completely new topic (e.g., "Hello", "Switching topics"), return it EXACTLY as is.
+
+        Output ONLY the rewritten query. No quotes, no prefixes.
+        """
+        
+        user_prompt = f"""
+        CONVERSATION HISTORY:
+        {history_text}
+        
+        LATEST USER QUERY:
+        {query}
+        
+        REWRITTEN QUERY:
+        """
+        
+        try:
+            # Use Flash for speed with low temperature for precision
+            url = f"{self.base_url}/{self.MODEL_STATUTORY}:generateContent?key={self.api_key}"
+            payload = {
+                "contents": [{"parts": [{"text": f"SYSTEM: {system_prompt}\n\n{user_prompt}"}]}],
+                "generationConfig": {"temperature": 0.1}
+            }
+            
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(url, json=payload)
+                if response.status_code == 200:
+                    rewritten = response.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+                    logger.info(f"[CQR] Rewritten: '{rewritten}'")
+                    return rewritten
+                else:
+                    logger.error(f"[CQR] Gemini Error: {response.text}")
+                    return query
+                    
+        except Exception as e:
+            logger.error(f"[CQR] Failed to rewrite: {e}")
+            return query
 
     async def deliberate(self, query: str, context: str) -> Dict[str, Any]:
         """Main entry point"""

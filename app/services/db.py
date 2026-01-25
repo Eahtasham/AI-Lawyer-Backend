@@ -48,6 +48,17 @@ class DatabaseService:
             logger.error(f"Error adding message: {e}")
             raise
 
+    def delete_message(self, message_id: str) -> bool:
+        """Hard deletes a specific message."""
+        try:
+            response = self.supabase.table("messages").delete().eq("id", message_id).execute()
+            if response.data:
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Error deleting message: {e}")
+            return False
+
     def delete_conversation(self, conversation_id: str, user_id: str) -> bool:
         """Soft deletes a conversation by setting is_deleted to True."""
         try:
@@ -97,20 +108,21 @@ class DatabaseService:
         """Retrieves conversation history, ensuring user owns it."""
         try:
             # First verify ownership (optional if RLS is trusted, but good for backend logic)
-            # We rely on RLS but since we use Service Key, we effectively bypass RLS.
-            # So we MUST verify ownership manually or use RLS with an impersonated session (advanced).
-            # For now, simple manual check:
+            # We fetch messages ordered by created_at DESC (newest first) to get the LAST N messages.
             
             # Fetch messages
             response = self.supabase.table("messages")\
                 .select("*")\
                 .eq("conversation_id", conversation_id)\
                 .eq("user_id", user_id)\
-                .order("created_at", desc=False)\
+                .order("created_at", desc=True)\
                 .limit(limit)\
                 .execute()
-                
-            return response.data
+            
+            # Return reversed list (Chronological order: Oldest -> Newest)
+            if response.data:
+                return response.data[::-1]
+            return []
         except Exception as e:
             logger.error(f"Error fetching history: {e}")
             return []

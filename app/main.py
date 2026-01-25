@@ -4,7 +4,7 @@ from app.api.chat import router as chat_router
 from app.logger import logger
 import time
 
-app = FastAPI(title="Legal RAG API", version="1.5.1")
+app = FastAPI(title="Samvidhaan API", version="2.0.1")
 
 # CORS
 app.add_middleware(
@@ -23,7 +23,7 @@ async def log_requests(request: Request, call_next):
     # Log request
     auth_header = request.headers.get("Authorization")
     auth_status = "Auth: YES" if auth_header else "Auth: NO"
-    logger.info(f"➡️  {request.method} {request.url.path} [{auth_status}]")
+    logger.info(f"-> {request.method} {request.url.path} [{auth_status}]")
     
     try:
         response = await call_next(request)
@@ -49,15 +49,15 @@ app.include_router(chat_router, prefix="/api")
 
 @app.on_event("startup")
 async def startup_event():
-    logger.info("Legal RAG API starting up...")
+    logger.info(f"{app.title} starting up...")
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    logger.info("Legal RAG API shutting down...")
+    logger.info(f"{app.title} shutting down...")
 
 @app.get("/")
 async def root():
-    return {"message": "Legal RAG API is running", "version": "1.0.0"}
+    return {"message": f"{app.title} is running", "version": app.version}
 
 @app.get("/health")
 async def health():
