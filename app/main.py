@@ -4,7 +4,7 @@ from app.api.chat import router as chat_router
 from app.logger import logger
 import time
 
-app = FastAPI(title="Samvidhaan API", version="2.0.1")
+app = FastAPI(title="Samvidhaan API", version="3.0.0")
 
 # CORS
 app.add_middleware(
@@ -58,6 +58,10 @@ async def shutdown_event():
 @app.get("/")
 async def root():
     return {"message": f"{app.title} is running", "version": app.version}
+
+@app.get("/version")
+async def version():
+    return {"version": app.version}
 
 @app.get("/health")
 async def health():
