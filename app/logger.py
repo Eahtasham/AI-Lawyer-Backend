@@ -8,7 +8,7 @@ def setup_logger():
     """Configure application logger"""
     
     # Create logger
-    logger = logging.getLogger("legal_rag")
+    logger = logging.getLogger("samvidhaan")
     logger.setLevel(logging.DEBUG)
     
     # Console handler (always)

@@ -28,7 +28,7 @@ A panel of specialized agents that process retrieved context before passing opin
     * **Devil’s Advocate:** Challenges the prevailing logic to minimize bias.
 
 ### 3. Knowledge Bases (Vector DB)
-Managed via **Qdrant** with dual-collection indexing:
+Managed via **Qdrant** with dal-collection indexing:
 * `indian_legal_docs`: Constitution, Central Acts, and Statutes.
 * `supreme_court_cases`: Summarized Judgments (~1950–Present).
 

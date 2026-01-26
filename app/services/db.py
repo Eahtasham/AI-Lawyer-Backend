@@ -45,6 +45,9 @@ class DatabaseService:
                 return response.data[0]['id']
             raise Exception("Failed to add message")
         except Exception as e:
+            # Suppress logging for expected Foreign Key errors (e.g. when chat.py needs to create a conversation)
+            if "23503" in str(e) or "foreign key constraint" in str(e).lower():
+                raise
             logger.error(f"Error adding message: {e}")
             raise
 

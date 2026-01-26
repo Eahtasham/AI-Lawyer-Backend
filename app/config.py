@@ -107,7 +107,7 @@ class Settings(BaseSettings):
     
     # Context Window Limits
     CONTEXT_MAX_CHARS: int = 15000  # Max characters to send to Chairman
-    CHAT_HISTORY_LIMIT: int = 5  # Number of previous messages to include
+    # CHAT_HISTORY_LIMIT: int = 5  # DEPRECATED: Controlled dynamically by user slider (using turns)
 
     class Config:
         env_file = ".env"

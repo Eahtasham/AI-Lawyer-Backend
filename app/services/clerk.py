@@ -89,7 +89,8 @@ class ClerkService:
         # Prepare History Context
         history_text = "NO PREVIOUS HISTORY"
         if history:
-            history_text = "\n".join([f"{msg.get('role', 'unknown').upper()}: {msg.get('content', '')}" for msg in history[-settings.CHAT_HISTORY_LIMIT:]])
+            # We trust the history passed to us (already filtered by chat endpoint)
+            history_text = "\n".join([f"{msg.get('role', 'unknown').upper()}: {msg.get('content', '')}" for msg in history])
 
         system_prompt = settings.PROMPT_CLERK
         
@@ -104,15 +105,20 @@ class ClerkService:
         try:
             logger.info(f"[Clerk] ========== Processing Query ==========")
             logger.info(f"[Clerk] Query: {query}")
-            logger.info(f"[Clerk] Context Window Size: {len(history)} messages (using last {settings.CHAT_HISTORY_LIMIT})")
+            
+            # Log as Turns (approx pairs / 2)
+            # History includes user+assistant pairs.
+            turns_count = len(history) // 2
+            logger.info(f"[Clerk] Context Window: {len(history)} messages (~{turns_count} turns)")
             logger.info(f"[Clerk] Web Search Enabled: {enable_web_search}")
             
             if history:
                 logger.info(f"[Clerk] History Context Preview:")
-                for i, msg in enumerate(history[-settings.CHAT_HISTORY_LIMIT:]):
+                # Show last few messages for debug
+                for i, msg in enumerate(history[-4:]):
                     role = msg.get('role', 'unknown')
                     content = msg.get('content', '')[:80]
-                    logger.info(f"  [{i+1}] {role.upper()}: {content}...")
+                    logger.info(f"  [{len(history)-3+i}] {role.upper()}: {content}...")
             else:
                 logger.info(f"[Clerk] No previous history")
             

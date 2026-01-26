@@ -1,7 +1,7 @@
 # Proof of Concept: AI Council Architecture for Indian Legal Query Resolution
 
 ## 1. Executive Summary
-This document outlines the Proof of Concept (PoC) for upgrading the existing **AI Lawyer Backend** from a standard RAG (Retrieval-Augmented Generation) system to a multi-agent **"AI Council"** architecture. By emulating a panel of legal experts rather than a single assistant, we aim to significantly reduce hallucinations and improve the nuance, accuracy, and legal grounding of answers, specifically tailored for Indian Law.
+This document outlines the Proof of Concept (PoC) for upgrading the existing **Samvidhaan Backend** from a standard RAG (Retrieval-Augmented Generation) system to a multi-agent **"AI Council"** architecture. By emulating a panel of legal experts rather than a single assistant, we aim to significantly reduce hallucinations and improve the nuance, accuracy, and legal grounding of answers, specifically tailored for Indian Law.
 
 ## 2. Problem Statement
 Single-model LLM responses, even with RAG, suffer from:

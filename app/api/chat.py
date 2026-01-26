@@ -146,8 +146,10 @@ async def stream_chat(
                     db_service.add_message(conv_id, user_id, "user", query)
             except Exception as e:
                 # Fallback for FK errors
+                # Fallback for FK errors
                  if "foreign key" in str(e) or "23503" in str(e) or not conv_id:
-                    conv_id = db_service.create_conversation(user_id, title=query[:50])
+                    # Create with the REQUESTED ID if it exists, otherwise it will generate one
+                    conv_id = db_service.create_conversation(user_id, title=query[:50], id=conv_id)
                     db_service.add_message(conv_id, user_id, "user", query)
                  else:
                     raise e
