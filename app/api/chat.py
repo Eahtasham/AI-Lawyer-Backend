@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request
 from fastapi.responses import StreamingResponse
 from app.models.schemas import ChatRequest, ChatResponse
 from app.services.rag import rag_service
@@ -93,94 +93,83 @@ async def update_conversation_endpoint(
 async def stream_chat(
     query: str, 
     conversation_id: str = None,
+    context_window: int = 5,
+    web_search: str = "false", 
     user_id: str = Depends(get_current_user)
 ):
     """
-    Streaming chat endpoint.
-    Uses standard Bearer token authentication via Depends.
+    Streaming chat endpoint v3.0 (Clerk + Council)
     """
-    # user_id is now guaranteed by Depends(get_current_user)
-
     async def event_generator():
         try:
             logger.info(f"[Stream] Request from {user_id}: {query}")
             
-            # Lists to capture full metadata (Initialize EARLY)
+            # State Containers
             stream_logs = []
             stream_chunks = []
             stream_opinions = []
-
-            # Use provided conversation_id or create new one
+            full_answer = []
+            
+            # 1. Conversation Management
             conv_id = conversation_id
             
-            # Log User Message (with recovery for missing/deleted conversations)
+            # Resolve Web Search Boolean
+            is_web_search_enabled = str(web_search).lower() == "true"
+            actual_window_size = (max(1, min(50, int(context_window))) * 2) + 1
+
+            # Check history for Retry/Regen logic
+            history_for_check = db_service.get_conversation_history(conv_id, user_id, limit=2)
+            should_add_user_msg = True
+            
+            if history_for_check:
+                last_msg = history_for_check[-1]
+                # Regeneration Logic
+                if last_msg.get('role') == 'assistant' and len(history_for_check) >= 2:
+                    prev_msg = history_for_check[-2]
+                    if prev_msg.get('role') == 'user' and prev_msg.get('content') == query:
+                        logger.info(f"[Stream] Regeneration detected. Deleting last response...")
+                        db_service.delete_message(last_msg['id'])
+                        should_add_user_msg = False
+                # Retry Logic
+                elif last_msg.get('role') == 'user' and last_msg.get('content') == query:
+                     logger.info(f"[Stream] Retry detected. Reusing user message.")
+                     should_add_user_msg = False
+
+            # Add User Message to DB
             try:
-                if not conv_id:
-                     raise ValueError("No ID provided, force creation")
-                db_service.add_message(conv_id, user_id, "user", query)
-            except Exception as e:
-                is_fk_error = "foreign key constraint" in str(e) or "23503" in str(e) 
-                if is_fk_error or not conv_id:
-                    logger.warning(f"[Stream] Conversation {conv_id} missing or invalid. Creating new conversation.")
-                    title = query[:50] + "..." if len(query) > 50 else query
-                    # Force creation with the requested ID to keep Frontend in sync
-                    conv_id = db_service.create_conversation(user_id, title=title, id=conv_id)
-                    # Retry logging user message to new conversation
+                if should_add_user_msg:
+                    if not conv_id:
+                         # Create new conversation if needed
+                         title = query[:50] + "..." if len(query) > 50 else query
+                         conv_id = db_service.create_conversation(user_id, title=title)
+                    
                     db_service.add_message(conv_id, user_id, "user", query)
-                else:
+            except Exception as e:
+                # Fallback for FK errors
+                # Fallback for FK errors
+                 if "foreign key" in str(e) or "23503" in str(e) or not conv_id:
+                    # Create with the REQUESTED ID if it exists, otherwise it will generate one
+                    conv_id = db_service.create_conversation(user_id, title=query[:50], id=conv_id)
+                    db_service.add_message(conv_id, user_id, "user", query)
+                 else:
                     raise e
             
-
-
-            yield "log: Searching SamVidhaan Legal Corpus...\n"
-            stream_logs.append("Searching SamVidhaan Legal Corpus...")
+            # Fetch Context History
+            history = db_service.get_conversation_history(conv_id, user_id, limit=actual_window_size)
             
-            chunks = qdrant_service.search(query, top_k=5)
+            # 2. Delegate to Council Service
+            # The service now handles Clerk, Retrieval, and Deliberation internally
             
-            if not chunks:
-                stream_logs.append("No relevant documents found.")
-                yield "data: {\"answer\": \"No relevant documents found.\", \"chunks\": []}\n"
-                
-                # Save with metadata
-                db_service.add_message(
-                    conv_id, 
-                    user_id, 
-                    "assistant", 
-                    "No relevant documents found.",
-                    metadata={"logs": stream_logs}
-                )
-                return
-            
-            # ... (rest of logic) ...
-            # We need to capture the full answer to log it.
-            full_answer = []
-
-            yield f"log: Found {len(chunks)} relevant legal documents.\n"
-            stream_logs.append(f"Found {len(chunks)} relevant legal documents.")
-            
-            # Send chunks to frontend immediately
-            # Ensure chunks are serializable
-            chunks_list = [c for c in chunks]
-            stream_chunks = chunks_list 
-            chunks_json = json.dumps(chunks_list)
-            
-            yield f"chunks: {chunks_json}\n"
-
-            # Build context
-            context = "\n\n".join([
-                f"[Chunk {c['rank']}]\n{c['text']}\nMetadata: {c['metadata']}"
-                for c in chunks
-            ])
-            
-            # 2. Hand over to Council Stream
-            yield "log: Convening AI Council...\n"
-            stream_logs.append("Convening AI Council...")
-            
-            async for event in council_service.deliberate_stream(query, context):
-                # event is like "data: ... \n" or "log: ... \n" or "opinion: ... \n"
+            async for event in council_service.deliberate_stream(
+                query=query, 
+                chat_history=history, 
+                enable_web_search=is_web_search_enabled,
+                conv_id=conv_id,
+                context_window_size=int(context_window)  # User's slider value
+            ):
                 clean_event = event.strip()
-                # logger.info(f"Stream Event: {clean_event[:100]}") # Verbose logging
-
+                
+                # --- Event Handling & Logging ---
                 if clean_event.startswith("log:"):
                     log_msg = clean_event[4:].strip()
                     stream_logs.append(log_msg)
@@ -189,75 +178,49 @@ async def stream_chat(
                     try:
                         op_data = json.loads(clean_event[8:].strip())
                         stream_opinions.append(op_data)
-                    except Exception as e:
-                        logger.error(f"Failed to parse opinion: {e}, Event: {clean_event}")
+                    except: pass
 
-                # We try to parse data events to capture answer
+                elif clean_event.startswith("chunks:"):
+                    try:
+                        chunk_data = json.loads(clean_event[7:].strip())
+                        stream_chunks = chunk_data # Replace or extend? Usually replace for unique set
+                    except: pass
+                
                 elif clean_event.startswith("data:"):
                     try:
-                        data_payload = clean_event[5:].strip()
-                        data_content = json.loads(data_payload)
-                        
-                        # If it's a token (for streaming simulation)
-                        if "token" in data_content:
-                             full_answer.append(data_content["token"])
-                        # If it's the final answer (atomic chunk)
-                        elif "answer" in data_content:
-                             logger.info(f"Captured Final Answer from Stream: {data_content['answer'][:50]}...")
-                             full_answer.append(data_content["answer"])
-                        elif "error" in data_content:
-                             logger.error(f"Stream Error Event: {data_content['error']}")
-                    except Exception as e:
-                        logger.error(f"Failed to parse data event: {e}, Payload: {clean_event[:50]}")
+                        data_payload = json.loads(clean_event[5:].strip())
+                        if "answer" in data_payload:
+                             full_answer.append(data_payload["answer"])
+                        if "error" in data_payload:
+                             logger.error(f"Stream Error: {data_payload['error']}")
+                    except: pass
                 
+                # Pass through to client
                 yield event
-            
-            # Log full answer with metadata
+
+            # 3. Save Final State to DB
             final_content = "".join(full_answer)
-            
             metadata = {
                 "logs": stream_logs,
                 "chunks": stream_chunks,
                 "council_opinions": stream_opinions
             }
-            logger.info(f"[Stream] Saving Message Metadata: {json.dumps(metadata)[:200]}...") # Log summary
             
             db_service.add_message(
                 conv_id, 
                 user_id, 
                 "assistant", 
-                final_content or "[Streamed Response]",
+                final_content or "[No Response]",
                 metadata=metadata
             )
 
         except asyncio.CancelledError:
-            logger.info(f"[Stream] Client disconnected (cancelled) for {user_id}")
-            # We can optionally save partial state here if desired
-            # For now, just exit gracefully so the background tasks (in council.py) get cancelled via GeneratorExit
+            logger.warning(f"[Stream] Client cancelled conversation {conversation_id}")
             raise
-
         except Exception as e:
-            logger.error(f"Stream error: {e}")
+            logger.error(f"[Stream] Error: {e}", exc_info=True)
             yield f"data: {{\"error\": \"{str(e)}\"}}\n"
-            
-            # Try to save partial state on error
-            try:
-                metadata = {
-                    "logs": stream_logs,
-                    "chunks": stream_chunks,
-                    "council_opinions": stream_opinions,
-                    "error": str(e)
-                }
-                db_service.add_message(
-                    conv_id, 
-                    user_id, 
-                    "assistant", 
-                    "".join(full_answer) + f"\n[Error: {str(e)}]",
-                    metadata=metadata
-                )
-            except Exception as save_err:
-                 logger.error(f"Failed to save error state: {save_err}")
         finally:
-            logger.info("[Stream] Generator closed.")
+            logger.info("[Stream] Closed.")
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")

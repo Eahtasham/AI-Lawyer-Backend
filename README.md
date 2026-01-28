@@ -1,6 +1,6 @@
-# AI Lawyer Backend ("The AI Council")
+# Samvidhaan Backend ("The AI Council")
 
-The **AI Lawyer Backend** is a sophisticated legal reasoning system designed to provide accurate, balanced, and citation-backed answers to queries about Indian Law.
+The **Samvidhaan Backend** is a sophisticated legal reasoning system designed to provide accurate, balanced, and citation-backed answers to queries about Indian Law.
 
 Unlike traditional chatbots that use a single LLM, this project implements a **Multi-Agent "AI Council" Architecture**. It simulates a panel of legal experts deliberating on a case before a Chief Justice (The Chairman) delivers the final verdict.
 
@@ -35,8 +35,8 @@ The system dispatches every user query to four specialized AI agents in parallel
 
 1.  **Clone the repository**
     ```bash
-    git clone https://github.com/Eahtasham/AI-Lawyer-Backend.git
-    cd AI-Lawyer-Backend
+    git clone https://github.com/durjoydutta/samvidhaan.git
+    cd samvidhaan/backend
     ```
 
 2.  **Create and activate virtual environment**

@@ -3,310 +3,439 @@ import httpx
 from typing import List, Dict, Any
 from app.config import settings
 from app.logger import logger
+from app.services.clerk import clerk_service, IntentType
+from app.services.qdrant import qdrant_service
 
 class CouncilService:
     """
-    AI Council Service using Google Gemini API directly.
+    AI Council Service v3.0
+    - Integrated Clerk (Router)
+    - Dual Retrieval (Statutes & Cases)
+    - User-Controlled Web Search (Global)
     """
-
-    # Gemini Models (Using variants for diversity)
-    MODEL_CONSTITUTIONAL = "gemini-2.5-flash"
-    MODEL_STATUTORY = "gemini-2.5-flash"
-    MODEL_CASE_LAW = "gemini-2.5-flash"
-    MODEL_DEVIL = "gemini-2.5-flash"
-    MODEL_CHAIRMAN = "gemini-2.5-pro" 
 
     def __init__(self):
         self.api_key = settings.GEMINI_API_KEY
         self.base_url = "https://generativelanguage.googleapis.com/v1beta/models"
         
+        # Load Model Configs
+        self.MODEL_CONSTITUTIONAL = settings.MODEL_STATUTORY # Reuse flash for now or add config
+        self.MODEL_STATUTORY = settings.MODEL_STATUTORY
+        self.MODEL_CASE_LAW = settings.MODEL_CASE_LAW
+        self.MODEL_DEVIL = settings.MODEL_DEVIL
+        self.MODEL_CHAIRMAN = settings.MODEL_CHAIRMAN
+        
         if not self.api_key:
             logger.warning("GEMINI_API_KEY not found. Council service will fail.")
-
-        logger.info("CouncilService initialized with Google Gemini API")
 
     async def _call_gemini(self, model: str, system_prompt: str, user_query: str, enable_search: bool = False) -> str:
         """Helper to call Gemini REST API"""
         url = f"{self.base_url}/{model}:generateContent?key={self.api_key}"
         
+        # Base Prompt
+        contents = [{"parts": [{"text": f"SYSTEM INSTRUCTION: {system_prompt}\n\n{user_query}"}]}]
+        
+        # Tools Config
+        tools = []
+        if enable_search:
+             tools.append({"googleSearch": {}})
+        
         payload = {
-            "contents": [{
-                "parts": [{"text": f"SYSTEM INSTRUCTION: {system_prompt}\n\n{user_query}"}]
-            }],
-             "generationConfig": {
-                "temperature": 0.7
-            }
+            "contents": contents,
+            "generationConfig": {"temperature": settings.TEMPERATURE_COUNCIL}
         }
         
-        if enable_search:
-            payload["tools"] = [{"googleSearch": {}}]
+        if tools:
+            payload["tools"] = tools
         
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=40.0) as client:
             response = await client.post(url, json=payload)
             if response.status_code != 200:
                 logger.error(f"Gemini API Error ({response.status_code}): {response.text}")
                 response.raise_for_status()
+            
             data = response.json()
-            return data["candidates"][0]["content"]["parts"][0]["text"]
+            try:
+                # Handle cases where Search tool returns 'groundingMetadata' but content is in a different structure
+                # Usually standard candidates[0].content.parts[0].text works
+                return data["candidates"][0]["content"]["parts"][0]["text"]
+            except (KeyError, IndexError):
+                logger.error(f"Gemini Malformed Response: {data}")
+                return "Error generating response."
 
-    async def _get_member_opinion(self, role: str, model: str, system_prompt: str, user_query: str, context: str, enable_search: bool = False) -> Dict[str, str]:
+    async def _get_member_opinion(self, role: str, model: str, system_prompt: str, user_query: str, context: str, enable_search: bool) -> Dict[str, str]:
         """Async worker to get a single council member's opinion"""
-        # No rate limiting (semaphore removed)
         try:
-            logger.info(f"[{role}] Deliberating using {model} (Web Search: {enable_search})...")
+            logger.info(f"[{role}] Deliberating (Search={enable_search})...")
             
-            if enable_search:
-                full_prompt = f"""
-                CONTEXT FROM DATABASE:
-                {context}
+            # Context Injection
+            full_prompt = f"""
+            LEGAL CONTEXT:
+            {context}
 
-                USER QUERY:
-                {user_query}
-                
-                INSTRUCTIONS:
-                1. First, classify the USER QUERY into ONE of the following categories:
-
-                A. LEGAL-ANALYSIS
-                    Queries that ask about:
-                    - Indian laws, statutes, acts, rules, regulations
-                    - Court cases, judgments, precedents
-                    - Legal procedures, rights, liabilities, penalties
-                    - Government bills, constitutional provisions, compliance
-                    - Legal interpretation or application
-
-                B. NON-LEGAL
-                    Queries that are NOT asking for legal knowledge, including but not limited to:
-                    - Greetings or conversational messages (e.g., "hello", "hi", "thanks")
-                    - Meta questions about the app, system, or AI (e.g., "what is this app?", "is this better than other legal apps?")
-                    - Comparisons, opinions, or evaluations of products, apps, or services
-                    - General knowledge, casual questions, or informational queries
-                    - Capability questions (e.g., "can you do X?", "what can you help with?")
-                    - Hypothetical, philosophical, or abstract questions not grounded in law
-                    - Current events, news, politics, sports, entertainment, or public discourse
-                    - Small talk or user intent probing
-
-                2. If the query is classified as NON-LEGAL:
-                - IMMEDIATELY BYPASS all legal reasoning, statute analysis, or legal verification.
-                - DO NOT attempt to reinterpret the query as a legal question.
-                - Use the Google Search tool ONLY if external factual information is required.
-                - Start the response with the exact tag: [[NON-LEGAL]]
-                - Then provide a direct, helpful, natural-language response.
-
-                3. If the query is classified as LEGAL-ANALYSIS:
-                - Check the provided CONTEXT first.
-                - If the context lacks required or up-to-date information, use the Google Search tool.
-                - Provide a structured, neutral, legally grounded answer.
-                - Do NOT include the [[NON-LEGAL]] tag.
-
-                4. STRICT RULES:
-                - Classification happens BEFORE any answering.
-                - If a query does not explicitly ask for legal knowledge, it MUST be treated as NON-LEGAL.
-                - Do NOT mention this classification process in your response.
-                - Do NOT output only the tag. Always follow it with an answer.
-                """
-            else:
-                full_prompt = f"""
-                CONTEXT FROM INDIAN LAWS:
-                {context}
-
-                USER QUERY:
-                {user_query}
-                
-                Based strictly on the context above, provide your analysis.
-                """
+            USER QUERY:
+            {user_query}
             
-            # Use the search tool if enabled
+            Keep your opinion focused on your specific role. 
+            If Web Search is enabled, verify facts if the context is insufficient.
+            """
+            
             opinion = await self._call_gemini(model, system_prompt, full_prompt, enable_search=enable_search)
 
-            logger.info(f"[{role}] Opinion submitted.")
             return {
                 "role": role,
                 "model": model,
-                "opinion": opinion
+                "opinion": opinion,
+                "web_search_enabled": enable_search
             }
 
         except Exception as e:
             logger.warning(f"[{role}] Absented due to error: {str(e)}")
             return None
 
-    async def _get_chairman_ruling(self, query: str, context: str, opinions: List[Dict[str, str]]) -> str:
+    async def _get_chairman_ruling(self, query: str, context: str, opinions: List[Dict[str, str]], enable_search: bool) -> str:
         """The Chairman synthesizes all opinions into a final answer"""
         valid_opinions = [op for op in opinions if op is not None]
         
-        if not valid_opinions:
-            return "The AI Council could not convene due to technical errors."
-            
-        logger.info(f"[Chairman] Reviewing {len(valid_opinions)} council opinions...")
-
-        # CHECK FOR "SPECIAL POWER" (Short-circuit if non-legal)
-        for op in valid_opinions:
-            if op["role"] == "Case Law Researcher" and "[[NON-LEGAL]]" in op["opinion"]:
-                logger.info(f"[Chairman] Detected non-legal query via Case Law Researcher. Raw opinion length: {len(op['opinion'])}")
-                clean_opinion = op["opinion"].replace("[[NON-LEGAL]]", "").strip()
-                if len(clean_opinion) < 5:
-                     logger.warning("[Chairman] Cleaned opinion is empty! Ignoring non-legal short-circuit.")
-                     continue
-                
-                return f"**Special Direct Ruling (Non-Legal Inquiry):**\n\n{clean_opinion}"
-
         opinions_text = "\n\n".join([
-            f"=== OPINION FROM {op['role']} ({op['model']}) ===\n{op['opinion']}"
+            f"=== OPINION FROM {op['role']} ===\n{op['opinion']}"
             for op in valid_opinions
         ])
 
-        system_prompt = """You are the Chief Justice and Chairman of the AI Legal Council. 
-        Your goal is to provide the most accurate, relevant, balanced, concise and legally sound answer to the user's query.
-
-        CRITICAL INSTRUCTIONS - READ CAREFULLY:
-        1. **ABSOLUTELY NO INTRODUCTIONS**: Never say "As the Chief Justice", "I have reviewed...", "The council has deliberated...", or "Here is the ruling".
-        2. **START IMMEDIATELY WITH THE ANSWER**: Begin your response directly with the legal analysis or answer.
-        3. **FORMATTING**: Use Markdown headings (#, ##) to structure the response. separating sections with distinct whitespace.
-        4. **TONE**: authoritative, objective, and direct.
-        5. **CONTEXT**: Focus strictly on INDIAN LAW.
-        
-        Example of how NOT to start:
-        "As the Chairman, I have..." (WRONG)
-        "Based on the opinions..." (WRONG)
-        
-        Example of how to start:
-        "**The Law on [Topic]**..." (RIGHT)
-        "Under Section X of the IPC..." (RIGHT)
-        """
+        system_prompt = settings.PROMPT_CHAIRMAN
 
         user_prompt = f"""
-        ORIGINAL QUERY: {query}
+        QUERY: {query}
         
         RETRIEVED CONTEXT:
-        {context}
+        {context[:settings.CONTEXT_MAX_CHARS]} 
         
-        COUNCIL DELIBERATIONS:
+        COUNCIL OPINIONS:
         {opinions_text}
         
-        Provide your Final Ruling below:
+        FINAL RULING:
         """
-
+        
         try:
-            return await self._call_gemini(self.MODEL_CHAIRMAN, system_prompt, user_prompt)
+            return await self._call_gemini(self.MODEL_CHAIRMAN, system_prompt, user_prompt, enable_search=enable_search)
         except Exception as e:
-            logger.error(f"[Chairman] Failed to rule: {str(e)}")
-            return "The Chairman is currently unavailable."
+            logger.error(f"[Chairman] Failed: {e}")
+            return "The Chairman could not issue a ruling due to technical difficulties."
 
-
-    async def deliberate_stream(self, query: str, context: str):
-        """Streaming entry point for SSE"""
+    async def deliberate_stream(self, query: str, chat_history: List[Dict] = [], enable_web_search: bool = False, conv_id:str = None, context_window_size: int = 5):
+        """
+        Main Streaming Pipeline v3.0
+        1. Clerk (Classify/Route)
+        2. Retrieval (Parallel)
+        3. Council (Parallel)
+        4. Chairman (Synthesis)
+        """
         
-        # 1. Define member tasks
-        member_prompts = [
-            ("Constitutional Expert", self.MODEL_CONSTITUTIONAL, 
-             "You are a Constitutional Law expert. Analyze the query based on the Constitution of India. Prioritize Fundamental Rights and constitutional validity.", False),
-            ("Statutory Analyst", self.MODEL_STATUTORY,
-             "You are a Black-letter law expert. Focus strictly on the text, definitions, and penalties in the provided Acts (IPC, CrPC, BNS). Be literal and precise.", False),
-            ("Case Law Researcher", self.MODEL_CASE_LAW,
-             "You are a Case Law specialist. Look for relevant precedents and court rulings on the web if not in context. Identify landmark judgments.", True),
-            ("Devil's Advocate", self.MODEL_DEVIL,
-             "You are the Devil's Advocate. Your job is to find loopholes, defenses, exceptions, or alternative interpretations.", False)
-        ]
-
-        tasks = []
-        for role, model, sys_prompt, search in member_prompts:
-            tasks.append(
-                asyncio.create_task(
-                    self._get_member_opinion(role, model, sys_prompt, query, context, enable_search=search)
-                )
-            )
-            # Yield initial log for each member
-            yield f"log: {role} has started review...\n"
-
-        logger.info("[Stream] Council members dispatched.")
-
-        # 2. Wait for members to finish as they complete
-        valid_opinions = []
+        # --- STEP 1: THE CLERK ---
+        loop = asyncio.get_running_loop()
         
-        try:
-            for completed_task in asyncio.as_completed(tasks):
-                result = await completed_task
-                if result:
-                    valid_opinions.append(result)
-                    # Yield opinion event
-                    import json
-                    yield f"opinion: {json.dumps(result)}\n"
-                    yield f"log: {result['role']} has submitted their opinion.\n"
-        finally:
-            # ensure all pending tasks are cancelled if we exit early (e.g. generator closed)
-            for t in tasks:
-                 if not t.done():
-                     t.cancel()
-                     logger.info(f"Cancelled pending council task: {t.get_name()}")
+        logger.info(f"[Council] ========== PIPELINE START ==========")
+        logger.info(f"[Council] Query: {query}")
+        logger.info(f"[Council] Conversation ID: {conv_id}")
+        logger.info(f"[Council] Context Window Size (User Setting): {context_window_size}")
+        logger.info(f"[Council] History Messages Retrieved: {len(chat_history)}")
+        logger.info(f"[Council] Web Search: {enable_web_search}")
         
-        # 3. Chairman Ruling
-        if not valid_opinions:
-            yield f"data: {json.dumps({'error': 'The AI Council could not convene due to technical errors.'})}\n"
+        yield f"log: [STEP 1/4] Clerk analyzing query intent...\n"
+        yield f"log: Context window: {context_window_size} (retrieved {len(chat_history)} messages)\n"
+        
+        clerk_resp = await clerk_service.classify_and_route(query, chat_history, enable_web_search=enable_web_search)
+        
+        if not clerk_resp.is_legal:
+            # NON-LEGAL BYPASS
+            # Backend: Detailed logging
+            logger.info(f"[Council] NON-LEGAL Query Detected")
+            logger.info(f"[Council] Query: {query}")
+            logger.info(f"[Council] Context Window: {len(chat_history)} messages")
+            logger.info(f"[Council] Web Search Enabled: {enable_web_search}")
+            if chat_history:
+                logger.info(f"[Council] Recent History Glimpse:")
+                for msg in chat_history[-3:]:  # Last 3 messages
+                    role = msg.get('role', 'unknown')
+                    content = msg.get('content', '')[:100]  # First 100 chars
+                    logger.info(f"  - {role.upper()}: {content}...")
+            
+            # Frontend: Concise stream logs
+            yield f"log: ✓ Clerk classified as NON-LEGAL query\n"
+            yield f"log: Context window: {context_window_size} (retrieved {len(chat_history)} messages)\n"
+            
+            if enable_web_search:
+                yield f"log: Web Search: ENABLED (using Gemini's grounding)\n"
+            
+            yield f"log: Generating direct response (bypassing legal council)...\n"
+            answer = clerk_resp.direct_answer or "I cannot answer this legal query."
+            
+            
+            # Backend: Log the response
+            logger.info(f"[Council] Direct Answer Length: {len(answer)} chars")
+            logger.info(f"[Council] Direct Answer Preview: {answer[:200]}...")
+            
+            # Send Final Answer Event
+            import json
+            yield f"data: {json.dumps({'answer': answer})}\n"
             return
 
-        yield "log: Chairman is reviewing all opinions...\n"
+        # LEGAL QUERY HANDLING
+        rewritten_query = clerk_resp.rewritten_query
+        intents = clerk_resp.search_intents
         
-        # We need to capture the Chairman's output. 
-        # Since _get_chairman_ruling is atomic, we can't stream the generation token-by-token 
-        # unless we rewrite it to use streamGenerateContent. 
-        # For now, we'll keep it atomic but yield it as the final chunk.
+        # Backend: Detailed legal path logging
+        logger.info(f"[Council] ========== LEGAL PATH INITIATED ==========")
+        logger.info(f"[Council] Original Query: {query}")
+        logger.info(f"[Council] Rewritten Query: {rewritten_query}")
+        logger.info(f"[Council] Search Intents: {[i.value for i in intents]}")
+        logger.info(f"[Council] Context Window: {len(chat_history)} messages")
+        logger.info(f"[Council] Web Search: {enable_web_search}")
         
-        # Reuse existing logic but we need to handle the case where it returns a string
-        # We manually construct the messages again or just call the helper 
+        # Frontend: User-friendly logging
+        yield f"log: ✓ Clerk classified as LEGAL query\n"
+        yield f"log: Intent: {', '.join([i.value.replace('search_', '').title() for i in intents])}\n"
         
-        final_answer = await self._get_chairman_ruling(query, context, valid_opinions)
+        if enable_web_search:
+            yield f"log: Web Search: ENABLED (Gemini grounding active)\n"
+        else:
+            yield f"log: Web Search: DISABLED (using local database only)\n"
         
-        # Yield result
-        # We can stream the text in chunks if we want to simulate typing, but for now just send it.
-        # Format for SSE data: 
+        if rewritten_query != query:
+            yield f"log: Query optimized for better search results\n"
+            logger.info(f"[Council] Query Optimization Applied")
+
+        # --- STEP 2: PARALLEL RETRIEVAL ---
+        logger.info(f"[Council] ========== STEP 2: DATABASE RETRIEVAL ==========")
+        yield f"log: \n"
+        yield f"log: [STEP 2/4] Searching Legal Databases...\n"
+        
+        # Define tasks
+        search_tasks = []
+        search_types = []
+        
+        if IntentType.SEARCH_STATUTES in intents or IntentType.SEARCH_BOTH in intents:
+            logger.info(f"[Council] Scheduling Statutes Search (Qdrant Collection: indian_legal_docs)")
+            logger.info(f"[Council] Search Query: {rewritten_query}")
+            logger.info(f"[Council] Top-K: {settings.RAG_TOP_K}")
+            search_tasks.append(loop.run_in_executor(None, qdrant_service.search_statutes, rewritten_query))
+            search_types.append("Statutes")
+            yield f"log: → Querying Statutes database (Indian Penal Code, CrPC, etc.)\n"
+        else:
+            search_tasks.append(asyncio.sleep(0)) # Dummy
+
+        if IntentType.SEARCH_CASES in intents or IntentType.SEARCH_BOTH in intents:
+            logger.info(f"[Council] Scheduling Cases Search (Qdrant Collection: supreme_court_cases)")
+            logger.info(f"[Council] Search Query: {rewritten_query}")
+            logger.info(f"[Council] Top-K: {settings.RAG_TOP_K}")
+            search_tasks.append(loop.run_in_executor(None, qdrant_service.search_cases, rewritten_query))
+            search_types.append("Cases")
+            yield f"log: → Querying Case Law database (Supreme Court precedents)\n"
+        else:
+            search_tasks.append(asyncio.sleep(0)) # Dummy
+
+        # Execute Search
+        logger.info(f"[Council] Executing {len([t for t in search_types])} parallel search tasks...")
+        yield f"log: Executing parallel vector similarity search...\n"
+        
+        raw_results = await asyncio.gather(*search_tasks)
+        
+        statute_chunks = raw_results[0] if isinstance(raw_results[0], list) else []
+        case_chunks = raw_results[1] if isinstance(raw_results[1], list) else []
+        
+        # Backend: Detailed retrieval results
+        logger.info(f"[Council] Retrieval Results:")
+        logger.info(f"  - Statutes: {len(statute_chunks)} documents")
+        if statute_chunks:
+            for i, chunk in enumerate(statute_chunks[:3]):
+                logger.info(f"    [{i+1}] {chunk['metadata'].get('law', 'Unknown')} (Score: {chunk.get('score', 0):.3f})")
+        
+        logger.info(f"  - Cases: {len(case_chunks)} documents")
+        if case_chunks:
+            for i, chunk in enumerate(case_chunks[:3]):
+                logger.info(f"    [{i+1}] {chunk['metadata'].get('case_name', 'Unknown')} (Score: {chunk.get('score', 0):.3f})")
+        
+        total_docs = len(statute_chunks) + len(case_chunks)
+        logger.info(f"[Council] Total Retrieved: {total_docs} documents")
+        
+        # Frontend: Concise results
+        yield f"log: ✓ Found {len(statute_chunks)} Statutes, {len(case_chunks)} Case Precedents\n"
+        if total_docs > 0:
+            avg_score = sum([c.get('score', 0) for c in statute_chunks + case_chunks]) / total_docs
+            yield f"log: Average relevance score: {avg_score:.1%}\n"
+        
+        # Send Chunks to UI (Merged list)
+        all_chunks = statute_chunks + case_chunks
+        # Re-rank based on scores broadly? Or just concat. Concat is fine for display.
+        # Assign unified ranks for display
+        for i, c in enumerate(all_chunks):
+            c['rank'] = i + 1
+            
         import json
+        yield f"chunks: {json.dumps(all_chunks)}\n"
+
+        # Context Formatting
+        def format_context(chunks):
+            return "\n\n".join([f"[Source: {c['metadata'].get('title')}]\n{c['text']}" for c in chunks])
+            
+        statute_ctx = format_context(statute_chunks)
+        case_ctx = format_context(case_chunks)
+        full_ctx = statute_ctx + "\n\n" + case_ctx
+
+        # --- STEP 3: COUNCIL DELIBERATION ---
+        logger.info(f"[Council] ========== STEP 3: COUNCIL DELIBERATION ==========")
+        yield f"log: \n"
+        yield f"log: [STEP 3/4] Convening AI Legal Council...\n"
+        
+        # Define Member Tasks with Specialized Context
+        tasks = []
+        council_members = []
+        
+        # Backend: Log context preparation
+        logger.info(f"[Council] Preparing context for council members:")
+        logger.info(f"  - Full Context Length: {len(full_ctx)} chars")
+        logger.info(f"  - Statute Context Length: {len(statute_ctx)} chars")
+        logger.info(f"  - Case Context Length: {len(case_ctx)} chars")
+        
+        # 1. Constitutional Expert (Needs Broad Context)
+        logger.info(f"[Council] Assigning Constitutional Expert (Model: {self.MODEL_CONSTITUTIONAL})")
+        tasks.append(self._get_member_opinion(
+            "Constitutional Expert", self.MODEL_CONSTITUTIONAL,
+            settings.PROMPT_CONSTITUTIONAL,
+            rewritten_query, full_ctx, enable_web_search
+        ))
+        council_members.append("Constitutional Expert")
+        yield f"log: → Constitutional Expert analyzing fundamental rights & validity\n"
+        
+        # 2. Statutory Analyst
+        if statute_chunks:
+            logger.info(f"[Council] Assigning Statutory Analyst (Model: {self.MODEL_STATUTORY})")
+            logger.info(f"  - Statute Context: {len(statute_chunks)} documents")
+            tasks.append(self._get_member_opinion(
+                "Statutory Analyst", self.MODEL_STATUTORY,
+                settings.PROMPT_STATUTORY,
+                rewritten_query, statute_ctx, enable_web_search
+            ))
+            council_members.append("Statutory Analyst")
+            yield f"log: → Statutory Analyst examining legal provisions & penalties\n"
+        else:
+            logger.info(f"[Council] Skipping Statutory Analyst (no statute chunks)")
+            
+        # 3. Case Law Researcher
+        if case_chunks or enable_web_search:
+            logger.info(f"[Council] Assigning Case Law Researcher (Model: {self.MODEL_CASE_LAW})")
+            logger.info(f"  - Case Context: {len(case_chunks)} documents")
+            tasks.append(self._get_member_opinion(
+                "Case Law Researcher", self.MODEL_CASE_LAW,
+                settings.PROMPT_CASE_LAW,
+                rewritten_query, case_ctx, enable_web_search
+            ))
+            council_members.append("Case Law Researcher")
+            yield f"log: → Case Law Researcher reviewing precedents & judgments\n"
+        else:
+            logger.info(f"[Council] Skipping Case Law Researcher (no cases, web search disabled)")
+             
+        # 4. Devil's Advocate
+        logger.info(f"[Council] Assigning Devil's Advocate (Model: {self.MODEL_DEVIL})")
+        tasks.append(self._get_member_opinion(
+            "Devil's Advocate", self.MODEL_DEVIL,
+            settings.PROMPT_DEVIL,
+            rewritten_query, full_ctx, enable_web_search
+        ))
+        council_members.append("Devil's Advocate")
+        yield f"log: → Devil's Advocate identifying counterarguments & loopholes\n"
+        
+        logger.info(f"[Council] Total Council Members: {len(council_members)}")
+        logger.info(f"[Council] Members: {', '.join(council_members)}")
+        yield f"log: Council size: {len(council_members)} expert members\n"
+        yield f"log: Awaiting parallel deliberations...\n"
+        
+        # Execute Council
+        completed_opinions = []
+        for coro in asyncio.as_completed(tasks):
+            result = await coro
+            if result:
+                completed_opinions.append(result)
+                opinion_length = len(result.get('opinion', ''))
+                logger.info(f"[Council] {result['role']} completed (Opinion: {opinion_length} chars)")
+                yield f"opinion: {json.dumps(result)}\n"
+                yield f"log: ✓ {result['role']} submitted opinion ({opinion_length} chars)\n"
+
+        # --- STEP 4: CHAIRMAN RULING ---
+        logger.info(f"[Council] ========== STEP 4: CHAIRMAN SYNTHESIS ==========")
+        
+        if not completed_opinions:
+            logger.error(f"[Council] CRITICAL: No opinions received from council")
+            yield f"log: ✗ Error: Council failed to deliberate\n"
+            yield f"data: {json.dumps({'error': 'Council failed to deliberate.'})}\n"
+            return
+
+        logger.info(f"[Council] Received {len(completed_opinions)} opinions")
+        logger.info(f"[Council] Opinion Summary:")
+        for op in completed_opinions:
+            logger.info(f"  - {op['role']}: {len(op.get('opinion', ''))} chars")
+        
+        yield f"log: \n"
+        yield f"log: [STEP 4/4] Chairman synthesizing final ruling...\n"
+        yield f"log: Analyzing {len(completed_opinions)} expert opinions\n"
+        
+        # Calculate total context being sent to Chairman
+        total_context_chars = len(full_ctx) + sum(len(op.get('opinion', '')) for op in completed_opinions)
+        logger.info(f"[Council] Total Context for Chairman: {total_context_chars} chars")
+        logger.info(f"  - Retrieved Documents: {len(full_ctx)} chars")
+        logger.info(f"  - Council Opinions: {sum(len(op.get('opinion', '')) for op in completed_opinions)} chars")
+        logger.info(f"[Council] Calling Chairman (Model: {self.MODEL_CHAIRMAN})")
+        
+        yield f"log: Context size: {total_context_chars:,} characters\n"
+        yield f"log: Generating comprehensive legal analysis...\n"
+        
+        final_answer = await self._get_chairman_ruling(rewritten_query, full_ctx, completed_opinions, enable_web_search)
+        
+        logger.info(f"[Council] Chairman Ruling Complete")
+        logger.info(f"[Council] Final Answer Length: {len(final_answer)} chars")
+        logger.info(f"[Council] Final Answer Preview: {final_answer[:300]}...")
+        logger.info(f"[Council] ========== PIPELINE COMPLETE ==========")
+        
+        yield f"log: ✓ Final ruling generated ({len(final_answer)} chars)\n"
         yield f"data: {json.dumps({'answer': final_answer})}\n"
-        yield "log: Session closed.\n"
 
-    async def deliberate(self, query: str, context: str) -> Dict[str, Any]:
-        """Main entry point"""
-        
-        tasks = [
-            self._get_member_opinion(
-                role="Constitutional Expert", 
-                model=self.MODEL_CONSTITUTIONAL,
-                system_prompt="You are a Constitutional Law expert. Analyze the query based on the Constitution of India. Prioritize Fundamental Rights and constitutional validity.",
-                user_query=query, 
-                context=context
-            ),
-            self._get_member_opinion(
-                role="Statutory Analyst", 
-                model=self.MODEL_STATUTORY,
-                system_prompt="You are a Black-letter law expert. Focus strictly on the text, definitions, and penalties in the provided Acts (IPC, CrPC, BNS). Be literal and precise.",
-                user_query=query, 
-                context=context
-            ),
-            self._get_member_opinion(
-                role="Case Law Researcher", 
-                model=self.MODEL_CASE_LAW,
-                system_prompt="You are a Case Law specialist. Look for relevant precedents and court rulings on the web if not in context. Identify landmark judgments.",
-                user_query=query, 
-                context=context,
-                enable_search=True  # ENABLE WEB SEARCH HERE
-            ),
-            self._get_member_opinion(
-                role="Devil's Advocate", 
-                model=self.MODEL_DEVIL,
-                system_prompt="You are the Devil's Advocate. Your job is to find loopholes, defenses, exceptions, or alternative interpretations.",
-                user_query=query, 
-                context=context
-            )
-        ]
 
-        logger.info("Council session started. Members deliberating...")
-        opinions = await asyncio.gather(*tasks)
+    async def rewrite_query(self, query: str, history_msgs: List[Dict]) -> str:
+        # Legacy method kept for interface compatibility if needed, 
+        # but now handled by Clerk.
+        pass
+
+    async def deliberate(self, query: str, context: str = "") -> Dict[str, Any]:
+        """
+        Legacy/Sync Entry Point.
+        Consumes the streaming generator to produce a single final response.
+        Ignores 'context' argument in favor of internal Clerk+Retrieval flow.
+        """
+        final_answer = ""
+        opinions = []
         
-        valid_opinions = [op for op in opinions if op is not None]
-        final_answer = await self._get_chairman_ruling(query, context, valid_opinions)
-        
+        # We start a new conversation context for this one-off request
+        async for event in self.deliberate_stream(query, chat_history=[], enable_web_search=False):
+            clean_event = event.strip()
+            
+            if clean_event.startswith("data:"):
+                import json
+                try:
+                    data = json.loads(clean_event[5:])
+                    if "answer" in data:
+                        final_answer += data["answer"] # Although usually atomic in stream
+                except: pass
+            
+            elif clean_event.startswith("opinion:"):
+                import json
+                try:
+                    opinions.append(json.loads(clean_event[8:]))
+                except: pass
+
         return {
             "query": query,
             "answer": final_answer,
-            "council_opinions": valid_opinions
+            "council_opinions": opinions
         }
 
 council_service = CouncilService()
