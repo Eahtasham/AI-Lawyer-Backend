@@ -95,6 +95,7 @@ async def stream_chat(
     conversation_id: str = None,
     context_window: int = 5,
     web_search: str = "false", 
+    mode: str = "research",
     user_id: str = Depends(get_current_user)
 ):
     """
@@ -165,7 +166,8 @@ async def stream_chat(
                 chat_history=history, 
                 enable_web_search=is_web_search_enabled,
                 conv_id=conv_id,
-                context_window_size=int(context_window)  # User's slider value
+                context_window_size=int(context_window),
+                mode=mode  # User's slider value
             ):
                 clean_event = event.strip()
                 

@@ -80,9 +80,14 @@ class QdrantService:
             return {
                 'source_type': 'case_law',
                 'case_name': payload.get('title', 'Untitled Judgment'), # Frontend expects case_name
+                'petitioner': payload.get('petitioner', ''),
+                'respondent': payload.get('respondent', ''),
+                'case_number': payload.get('case_number', ''),
+                'case_type': payload.get('case_type', ''),
                 'court': payload.get('court', 'Supreme Court'),
                 'date': payload.get('date', 'Unknown Date'),
                 'year': payload.get('year', ''),
+                'url': payload.get('url', ''),
                 'citation': ", ".join([str(x) for x in payload.get('citation_refs', []) if x is not None]) if isinstance(payload.get('citation_refs'), list) else str(payload.get('citation_refs', '') or ''),
                 'bench': ", ".join([str(x) for x in payload.get('bench', []) if x is not None]) if isinstance(payload.get('bench'), list) else str(payload.get('bench', '') or ''),
                 'text': text_content, # Normalized text field
@@ -103,11 +108,13 @@ class QdrantService:
             return {
                 'source_type': 'statute',
                 'law': payload.get('act_title', payload.get('law', 'Unknown Act')), # Frontend expects 'law'
+                'act_id': payload.get('act_id', ''),
                 'section_number': sect_num or str(payload.get('section_number', '')),
                 'section_title': sect_title or payload.get('section_title', ''),
                 'chapter_title': payload.get('chapter_name', payload.get('chapter_title', '')),
                 'year': payload.get('year', ''),
                 'enactment_date': payload.get('enactment_date', ''),
+                'url': payload.get('url', None),
                 'text': payload.get('text', ''), # User wants relevant part, usually 'text' in statute payload IS the section text
                 # Keep raw
                 'full_metadata': payload

@@ -20,6 +20,7 @@ The system dispatches every user query to four specialized AI agents in parallel
 *   **RAG Pipeline**: Ingests legal texts (IndianKanoon), performs semantic chunking, and retrieves context from **Qdrant**.
 *   **Hybrid Search**: Combines dense vector embeddings with metadata filtering (e.g., specific Acts or Years).
 *   **Parallel Deliberation**: Uses Python `asyncio` to run all council members simultaneously for low latency.
+*   **3-Tier Modes**: Offers "Fast", "Balanced", and "Research" modes to balance speed vs. depth.
 *   **Live Streaming**: Exposes a Server-Sent Events (SSE) endpoint to stream deliberation logs in real-time to the frontend.
 *   **Citation-Backed**: Answers are grounded in actual statutes and case laws, minimizing hallucinations.
 
@@ -74,8 +75,13 @@ The system dispatches every user query to four specialized AI agents in parallel
 
 ## 🔌 API Usage
 
-### 1. streaming (Live Deliberation)
-**GET** `/api/stream?query=Can I carry alcohol in Bihar?`
+### 1. Streaming (Live Deliberation)
+**GET** `/api/stream?query=...&mode=...&web_search=...`
+
+**Parameters:**
+- `query`: The legal question.
+- `mode`: `fast` | `balanced` | `research` (Default: `research`).
+- `web_search`: `true` | `false` (Enables Google Search for case law).
 
 This endpoint uses **Server-Sent Events (SSE)** to stream the Council's thought process.
 
