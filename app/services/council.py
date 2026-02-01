@@ -5,6 +5,7 @@ from app.config import settings
 from app.logger import logger
 from app.services.clerk import clerk_service, IntentType
 from app.services.qdrant import qdrant_service
+from app.models.schemas import ChatMode
 
 class CouncilService:
     """
@@ -122,7 +123,7 @@ class CouncilService:
             logger.error(f"[Chairman] Failed: {e}")
             return "The Chairman could not issue a ruling due to technical difficulties."
 
-    async def deliberate_stream(self, query: str, chat_history: List[Dict] = [], enable_web_search: bool = False, conv_id:str = None, context_window_size: int = 5):
+    async def deliberate_stream(self, query: str, chat_history: List[Dict] = [], enable_web_search: bool = False, conv_id:str = None, context_window_size: int = 5, mode: str = "research"):
         """
         Main Streaming Pipeline v3.0
         1. Clerk (Classify/Route)
@@ -144,7 +145,7 @@ class CouncilService:
         yield f"log: [STEP 1/4] Clerk analyzing query intent...\n"
         yield f"log: Context window: {context_window_size} (retrieved {len(chat_history)} messages)\n"
         
-        clerk_resp = await clerk_service.classify_and_route(query, chat_history, enable_web_search=enable_web_search)
+        clerk_resp = await clerk_service.classify_and_route(query, chat_history, enable_web_search=enable_web_search, mode=mode)
         
         if not clerk_resp.is_legal:
             # NON-LEGAL BYPASS
@@ -184,8 +185,28 @@ class CouncilService:
         rewritten_query = clerk_resp.rewritten_query
         intents = clerk_resp.search_intents
         
+        # --- MODE-BASED OPTIMIZATION ---
+        if mode == ChatMode.FAST or mode == ChatMode.BALANCED:
+            # Remove Case Law Search for speed
+            refined_intents = []
+            for i in intents:
+                if i == IntentType.SEARCH_CASES: continue # Drop cases
+                if i == IntentType.SEARCH_BOTH: 
+                    refined_intents.append(IntentType.SEARCH_STATUTES) # Downgrade to statutes
+                else:
+                    refined_intents.append(i)
+            
+            if not refined_intents: refined_intents = [IntentType.SEARCH_STATUTES]
+            intents = list(set(refined_intents)) # Dedupe
+            yield f"log: ⚡ Mode '{mode.upper()}' Active: Skipping Case Law search for speed.\n"
+
+        # elif mode == ChatMode.RESEARCH:
+        #      # Logic handled by Clerk natively now
+        #      pass
+
         # Backend: Detailed legal path logging
         logger.info(f"[Council] ========== LEGAL PATH INITIATED ==========")
+        logger.info(f"[Council] Mode: {mode}")
         logger.info(f"[Council] Original Query: {query}")
         logger.info(f"[Council] Rewritten Query: {rewritten_query}")
         logger.info(f"[Council] Search Intents: {[i.value for i in intents]}")
@@ -282,9 +303,28 @@ class CouncilService:
         case_ctx = format_context(case_chunks)
         full_ctx = statute_ctx + "\n\n" + case_ctx
 
-        # --- STEP 3: COUNCIL DELIBERATION ---
+        # --- STEP 3: COUNCIL DELIBERATION (OR FAST BYPASS) ---
         logger.info(f"[Council] ========== STEP 3: COUNCIL DELIBERATION ==========")
         yield f"log: \n"
+        
+        # === FAST MODE: SINGLE SHOT ===
+        if mode == ChatMode.FAST:
+            yield f"log: [STEP 3/3] Generating Fast Summary (No Council)...\n"
+            
+            # Simple Prompt
+            system_prompt = "You are a legal assistant. specific Indian Acts have been provided. Summarize them to answer the user query in simple terms. Do not use legal jargon if possible."
+            user_prompt = f"QUERY: {rewritten_query}\n\nCONTEXT:\n{statute_ctx}"
+            
+            yield f"log: Generating direct response from {len(statute_chunks)} retrieved statutes...\n"
+            
+            # Direct Call (Flash)
+            fast_answer = await self._call_gemini(settings.MODEL_CLERK, system_prompt, user_prompt, enable_search=False)
+            
+            yield f"log: ✓ Response generated.\n"
+            import json
+            yield f"data: {json.dumps({'answer': fast_answer})}\n"
+            return
+
         yield f"log: [STEP 3/4] Convening AI Legal Council...\n"
         
         # Define Member Tasks with Specialized Context
@@ -321,8 +361,9 @@ class CouncilService:
         else:
             logger.info(f"[Council] Skipping Statutory Analyst (no statute chunks)")
             
-        # 3. Case Law Researcher
-        if case_chunks or enable_web_search:
+        # 3. Case Law Researcher (SKIPPED IN BALANCED MODE)
+        skip_cases = (mode == ChatMode.BALANCED)
+        if (case_chunks or enable_web_search) and not skip_cases:
             logger.info(f"[Council] Assigning Case Law Researcher (Model: {self.MODEL_CASE_LAW})")
             logger.info(f"  - Case Context: {len(case_chunks)} documents")
             tasks.append(self._get_member_opinion(
@@ -333,7 +374,8 @@ class CouncilService:
             council_members.append("Case Law Researcher")
             yield f"log: → Case Law Researcher reviewing precedents & judgments\n"
         else:
-            logger.info(f"[Council] Skipping Case Law Researcher (no cases, web search disabled)")
+            reason = "balanced mode active" if skip_cases else "no cases/search disabled"
+            logger.info(f"[Council] Skipping Case Law Researcher ({reason})")
              
         # 4. Devil's Advocate
         logger.info(f"[Council] Assigning Devil's Advocate (Model: {self.MODEL_DEVIL})")

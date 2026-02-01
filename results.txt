@@ -1,0 +1,3 @@
+Status: 200
+Stream opened. Waiting for chunks...
+[1.94s] Chunk received (268 chars): 'data: {"error": "{\'message\': \'insert or update on table "conversations" violates foreign key constraint "conversations_user_id_fkey"\', \'code\': \'23503\', \'hint\': None, \'details\': \'Key (user_id)=(00000000-0000-0000-0000-000000000000) is not present in table "users".\'}"}\n'

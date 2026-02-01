@@ -77,7 +77,7 @@ class ClerkService:
                 logger.error(f"[Clerk] Malformed response: {data}")
                 return "{}"
 
-    async def classify_and_route(self, query: str, history: List[Dict], enable_web_search: bool = False) -> ClerkResponse:
+    async def classify_and_route(self, query: str, history: List[Dict], enable_web_search: bool = False, mode: str = "research") -> ClerkResponse:
         """
         Main entry point for the Clerk.
         Processing Steps:
@@ -100,6 +100,10 @@ class ClerkService:
         
         CURRENT QUERY:
         {query}
+        
+        USER SETTING:
+        Mode: {mode.upper()}
+        (If Mode is RESEARCH, you should bias towards 'search_both' to ensure comprehensive coverage unless the query is extremely simple or irrelevant to case law.)
         """
         
         try:
