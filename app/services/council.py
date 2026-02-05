@@ -1,5 +1,6 @@
 import asyncio
 import httpx
+import json
 from typing import List, Dict, Any
 from app.config import settings
 from app.logger import logger
@@ -186,19 +187,12 @@ class CouncilService:
         intents = clerk_resp.search_intents
         
         # --- MODE-BASED OPTIMIZATION ---
-        if mode == ChatMode.FAST or mode == ChatMode.BALANCED:
-            # Remove Case Law Search for speed
-            refined_intents = []
-            for i in intents:
-                if i == IntentType.SEARCH_CASES: continue # Drop cases
-                if i == IntentType.SEARCH_BOTH: 
-                    refined_intents.append(IntentType.SEARCH_STATUTES) # Downgrade to statutes
-                else:
-                    refined_intents.append(i)
-            
-            if not refined_intents: refined_intents = [IntentType.SEARCH_STATUTES]
-            intents = list(set(refined_intents)) # Dedupe
-            yield f"log: ⚡ Mode '{mode.upper()}' Active: Skipping Case Law search for speed.\n"
+        # NOTE: Intent filtering removed to support full retrieval in all modes as per redesign.
+        # Decisions are now handled by Clerk natively or via model complexity differences.
+        
+        # if mode == ChatMode.FAST or mode == ChatMode.BALANCED:
+        #     ... (Removed)
+
 
         # elif mode == ChatMode.RESEARCH:
         #      # Logic handled by Clerk natively now
@@ -307,25 +301,37 @@ class CouncilService:
         logger.info(f"[Council] ========== STEP 3: COUNCIL DELIBERATION ==========")
         yield f"log: \n"
         
-        # === FAST MODE: SINGLE SHOT ===
+        # === FAST MODE: SINGLE SHOT DIRECT ===
         if mode == ChatMode.FAST:
-            yield f"log: [STEP 3/3] Generating Fast Summary (No Council)...\n"
+            yield f"log: [STEP 3/3] Generating Fast Answer (Direct Mode)...\n"
             
             # Simple Prompt
-            system_prompt = "You are a legal assistant. specific Indian Acts have been provided. Summarize them to answer the user query in simple terms. Do not use legal jargon if possible."
-            user_prompt = f"QUERY: {rewritten_query}\n\nCONTEXT:\n{statute_ctx}"
+            system_prompt = "You are a legal assistant. Answer the user query based on the provided context. Be concise and accurate."
+            user_prompt = f"QUERY: {rewritten_query}\n\nCONTEXT:\n{full_ctx}" # Use full_ctx (Statutes + Cases)
             
-            yield f"log: Generating direct response from {len(statute_chunks)} retrieved statutes...\n"
+            yield f"log: Generating direct response from retrieved documents...\n"
             
-            # Direct Call (Flash)
-            fast_answer = await self._call_gemini(settings.MODEL_CLERK, system_prompt, user_prompt, enable_search=False)
-            
-            yield f"log: ✓ Response generated.\n"
-            import json
-            yield f"data: {json.dumps({'answer': fast_answer})}\n"
+            # Use unified helper
+            async for event in self._generate_and_stream_response(settings.MODEL_CLERK, system_prompt, user_prompt, enable_web_search):
+                yield event
             return
 
-        yield f"log: [STEP 3/4] Convening AI Legal Council...\n"
+        # === BALANCED MODE: REASONING ONE-SHOT ===
+        if mode == ChatMode.BALANCED:
+            yield f"log: [STEP 3/3] Generating Balanced Analysis (Reasoning Mode)...\n"
+            
+            # Chain of Thought Prompt
+            system_prompt = settings.PROMPT_CHAIRMAN + "\n\nINSTRUCTION: You are acting as the sole legal authority. Analyze the User Query against the Retrieved Context (Statutes and Case Law). Considerations: 1. Constitutional validity. 2. Statutory interpretation. 3. Precedents. Formulate a balanced and legally sound answer."
+            user_prompt = f"QUERY: {rewritten_query}\n\nRETRIEVED CONTEXT:\n{full_ctx}"
+            
+            yield f"log: Analyzing context with Chairman model (One-Shot)...\n"
+            
+            # Use unified helper
+            async for event in self._generate_and_stream_response(self.MODEL_CHAIRMAN, system_prompt, user_prompt, enable_web_search):
+                yield event
+            return
+
+        yield f"log: [STEP 3/4] Convening AI Legal Council (Deep Mode)...\n"
         
         # Define Member Tasks with Specialized Context
         tasks = []
@@ -361,9 +367,9 @@ class CouncilService:
         else:
             logger.info(f"[Council] Skipping Statutory Analyst (no statute chunks)")
             
-        # 3. Case Law Researcher (SKIPPED IN BALANCED MODE)
-        skip_cases = (mode == ChatMode.BALANCED)
-        if (case_chunks or enable_web_search) and not skip_cases:
+        # 3. Case Law Researcher
+        # NOTE: Always active in Deep/Research Mode
+        if (case_chunks or enable_web_search):
             logger.info(f"[Council] Assigning Case Law Researcher (Model: {self.MODEL_CASE_LAW})")
             logger.info(f"  - Case Context: {len(case_chunks)} documents")
             tasks.append(self._get_member_opinion(
@@ -374,8 +380,7 @@ class CouncilService:
             council_members.append("Case Law Researcher")
             yield f"log: → Case Law Researcher reviewing precedents & judgments\n"
         else:
-            reason = "balanced mode active" if skip_cases else "no cases/search disabled"
-            logger.info(f"[Council] Skipping Case Law Researcher ({reason})")
+            logger.info(f"[Council] Skipping Case Law Researcher (no cases/search disabled)")
              
         # 4. Devil's Advocate
         logger.info(f"[Council] Assigning Devil's Advocate (Model: {self.MODEL_DEVIL})")
@@ -421,6 +426,7 @@ class CouncilService:
         yield f"log: [STEP 4/4] Chairman synthesizing final ruling...\n"
         yield f"log: Analyzing {len(completed_opinions)} expert opinions\n"
         
+        
         # Calculate total context being sent to Chairman
         total_context_chars = len(full_ctx) + sum(len(op.get('opinion', '')) for op in completed_opinions)
         logger.info(f"[Council] Total Context for Chairman: {total_context_chars} chars")
@@ -429,23 +435,202 @@ class CouncilService:
         logger.info(f"[Council] Calling Chairman (Model: {self.MODEL_CHAIRMAN})")
         
         yield f"log: Context size: {total_context_chars:,} characters\n"
-        yield f"log: Generating comprehensive legal analysis...\n"
+        yield f"log: Generating comprehensive legal analysis (Final Ruling)...\n"
         
-        final_answer = await self._get_chairman_ruling(rewritten_query, full_ctx, completed_opinions, enable_web_search)
+        # Prepare Prompt for Chairman (reconstruct prompt logic from _get_chairman_ruling)
+        valid_opinions = [op for op in completed_opinions]
+        opinions_text = "\n\n".join([
+            f"=== OPINION FROM {op['role']} ===\n{op['opinion']}"
+            for op in valid_opinions
+        ])
         
-        logger.info(f"[Council] Chairman Ruling Complete")
-        logger.info(f"[Council] Final Answer Length: {len(final_answer)} chars")
-        logger.info(f"[Council] Final Answer Preview: {final_answer[:300]}...")
+        system_prompt = settings.PROMPT_CHAIRMAN
+        user_prompt = f"""
+        QUERY: {rewritten_query}
+        
+        RETRIEVED CONTEXT:
+        {full_ctx[:settings.CONTEXT_MAX_CHARS]} 
+        
+        COUNCIL OPINIONS:
+        {opinions_text}
+        
+        FINAL RULING:
+        """
+        
+        # Use unified helper
+        async for event in self._generate_and_stream_response(self.MODEL_CHAIRMAN, system_prompt, user_prompt, enable_web_search):
+            yield event
+
         logger.info(f"[Council] ========== PIPELINE COMPLETE ==========")
         
-        yield f"log: ✓ Final ruling generated ({len(final_answer)} chars)\n"
-        yield f"data: {json.dumps({'answer': final_answer})}\n"
+        yield f"log: ✓ Complete.\n"
 
 
-    async def rewrite_query(self, query: str, history_msgs: List[Dict]) -> str:
+    async def _stream_call_gemini(self, model: str, system_prompt: str, user_query: str, enable_search: bool = False):
+        """Helper to call Gemini REST API with Streaming"""
+        url = f"{self.base_url}/{model}:streamGenerateContent?key={self.api_key}&alt=sse"
+        
+        # Base Prompt
+        contents = [{"parts": [{"text": f"SYSTEM INSTRUCTION: {system_prompt}\n\n{user_query}"}]}]
+        
+        # Tools Config
+        tools = []
+        if enable_search:
+             tools.append({"googleSearch": {}})
+        
+        payload = {
+            "contents": contents,
+            "generationConfig": {"temperature": settings.TEMPERATURE_CHAIRMAN}
+        }
+        
+        if tools:
+            payload["tools"] = tools
+            
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            async with client.stream("POST", url, json=payload) as response:
+                if response.status_code != 200:
+                    error_body = await response.aread()
+                    logger.error(f"Gemini Streaming Error ({response.status_code}): {error_body.decode()}")
+                    yield f"[Error: {response.status_code}]"
+                    return
+
+                try:
+                    # Parse SSE-like JSON stream
+                    async for line in response.aiter_lines():
+                        if not line: continue
+                        
+                        if line.startswith("data:"):
+                            try:
+                                json_str = line[5:].strip()
+                                if not json_str: continue
+                                
+                                data = json.loads(json_str)
+                                if "candidates" in data:
+                                    candidate = data["candidates"][0]
+                                    if "content" in candidate and "parts" in candidate["content"]:
+                                        text_chunk = candidate["content"]["parts"][0].get("text", "")
+                                        if text_chunk:
+                                            yield text_chunk
+                            except Exception as e:
+                                pass
+                except Exception as e:
+                     logger.error(f"Stream Consumption Error: {e}")
+                     pass
+            
+            
+    # async def _generate_followup_questions(self, context_text: str) -> List[str]:
+    #     """
+    #     REMOVED: Integrated into Single Pass Stream.
+    #     """
+    #     return [] 
+        
+    # --- END OF REPLACEMENT CHUNK PLANNING ---
+    
+    # Let's do it in smaller chunks. 
+    # FIRST: Add the helper methods to the CLASS.
+    # SECOND: Replace Step 4 in `deliberate_stream`.
+
+
         # Legacy method kept for interface compatibility if needed, 
         # but now handled by Clerk.
         pass
+
+    async def _generate_and_stream_response(self, model: str, system_prompt: str, user_prompt: str, enable_search: bool) -> None:
+        """
+        Unified helper with Stream Splitting logic to extracting follow-ups from a single pass.
+        """
+        full_answer = ""
+        separator = settings.FOLLOWUP_SEPARATOR
+        separator_len = len(separator)
+        
+        # Inject Follow-up Instruction
+        # We inject it into BOTH system and user prompt to ensure adherence
+        system_prompt += settings.PROMPT_FOLLOWUP_INSTRUCTION
+        user_prompt_with_instruction = f"{user_prompt}\n\n{settings.PROMPT_FOLLOWUP_INSTRUCTION}"
+        
+        buffer = ""
+        found_separator = False
+        followup_buffer = ""
+        
+        # DEBUG: Track token count
+        token_count = 0
+        
+        async for chunk in self._stream_call_gemini(model, system_prompt, user_prompt_with_instruction, enable_search=enable_search):
+            # logger.info(f"[StreamDebug] Chunk received: {len(chunk)} chars")
+            buffer += chunk
+            
+            if found_separator:
+                followup_buffer += chunk
+                continue
+                
+            # Check for separator in buffer
+            if separator in buffer:
+                found_separator = True
+                # Split
+                parts = buffer.split(separator)
+                safe_text = parts[0]
+                followup_text = parts[1]
+                
+                # Yield the safe text (final answer part)
+                if safe_text:
+                    full_answer += safe_text
+                    token_count += 1
+                    if token_count == 1:
+                        logger.info("[StreamDebug] FIRST TOKEN YIELDED from Splitter")
+                    yield f"token: {json.dumps(safe_text)}\n"
+                
+                logger.info("[StreamDebug] Separator found! Switching to followup collection.")
+                
+                # Start collecting followups
+                followup_buffer = followup_text
+                # Clear buffer (not needed, but good practice)
+                buffer = "" 
+                continue
+            
+            # Streaming logic with safety buffer
+            # We must keep enough chars in buffer to cover partial separator
+            # E.g. separator is "+++FOLLOW_UP+++" (15 chars)
+            # If buffer is "Safe text... +++FO", we can yield "Safe text... "
+            
+            if len(buffer) > separator_len:
+                # Yield the SAFE part, keep the TAIL
+                safe_chunk = buffer[:-separator_len]
+                buffer = buffer[-separator_len:] # Keep tail
+                
+                full_answer += safe_chunk
+                token_count += 1
+                if token_count == 1:
+                     logger.info("[StreamDebug] FIRST TOKEN YIELDED from Buffer")
+                yield f"token: {json.dumps(safe_chunk)}\n"
+        
+        # End of Stream
+        logger.info(f"[StreamDebug] Stream ended. Tokens yielded: {token_count}. Separator found: {found_separator}")
+
+        yield f"log: ✓ Response generated.\n"
+        
+        # If separator was never found (model ignored instruction), flush buffer as text
+        if not found_separator and buffer:
+             logger.warning("[StreamDebug] Separator NOT found. Flushing remaining buffer.")
+             full_answer += buffer
+             yield f"token: {json.dumps(buffer)}\n"
+             
+        # Process Follow-ups
+        if followup_buffer:
+             logger.info(f"Parsing integrated follow-up questions... Buffer len: {len(followup_buffer)}")
+             yield f"log: Parsing integrated follow-up questions...\n"
+             questions = [line.strip() for line in followup_buffer.split('\n') if line.strip() and '?' in line]
+             # Basic cleanup
+             questions = [q.lstrip("1234567890.-•* ") for q in questions][:3]
+             
+             if questions:
+                 logger.info(f"Generated follow-ups: {questions}")
+                 yield f"followup: {json.dumps(questions)}\n"
+             else:
+                 logger.warning("Follow-up buffer had content but no questions parsed.")
+                 
+        # Final Data Event
+        yield f"data: {json.dumps({'answer': full_answer})}\n"
+
 
     async def deliberate(self, query: str, context: str = "") -> Dict[str, Any]:
         """

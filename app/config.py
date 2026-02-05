@@ -94,6 +94,17 @@ class Settings(BaseSettings):
         4. If opinions conflict, prefer Statutory interpretation for Acts and Case Law for precedents.
         5. Verify claims using Web Search ONLY IF NECESSARY and ENABLED.
         """
+    PROMPT_FOLLOWUP_INSTRUCTION: str = "\n\nIMPORTANT: At the end of your response, you MUST generate 3 relevant follow-up questions. You MUST first output the separator '+++FOLLOW_UP+++' on a new line, followed by the questions on separate lines. Do not stop without doing this."
+    FOLLOWUP_SEPARATOR: str = "+++FOLLOW_UP+++"
+    
+    PROMPT_FOLLOWUP: str = """
+        You are an AI legal assistant. Based on the provided legal analysis/answer, generate 3 relevant, short, and curious follow-up questions that the user might want to ask next.
+        
+        GUIDELINES:
+        1. Questions should be concise (under 15 words).
+        2. They should explore implications, exceptions, or related procedures.
+        3. Do not number the output. Just provide 3 lines, one question per line.
+        """
 
     # RAG Configuration
     RAG_TOP_K: int = 5  # Number of documents to retrieve from vector DB
