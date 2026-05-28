@@ -130,4 +130,84 @@ class DatabaseService:
             logger.error(f"Error fetching history: {e}")
             return []
 
+    # --- Document Analysis Methods ---
+
+    def create_document_analysis(self, user_id: str, file_name: str, file_type: str, file_size: int, storage_path: str) -> str:
+        """Creates a new document analysis record and returns its ID."""
+        try:
+            data = {
+                "user_id": user_id,
+                "file_name": file_name,
+                "file_type": file_type,
+                "file_size": file_size,
+                "storage_path": storage_path,
+                "status": "pending",
+            }
+            response = self.supabase.table("document_analyses").insert(data).execute()
+            if response.data:
+                return response.data[0]["id"]
+            raise Exception("Failed to create document analysis")
+        except Exception as e:
+            logger.error(f"Error creating document analysis: {e}")
+            raise
+
+    def update_analysis_status(self, analysis_id: str, status: str, analysis_json: dict = None, extracted_text: str = None):
+        """Updates analysis status and optionally the analysis result and extracted text."""
+        try:
+            data = {
+                "status": status,
+                "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            }
+            if analysis_json is not None:
+                data["analysis"] = analysis_json
+            if extracted_text is not None:
+                data["extracted_text"] = extracted_text
+
+            self.supabase.table("document_analyses").update(data).eq("id", analysis_id).execute()
+        except Exception as e:
+            logger.error(f"Error updating analysis status: {e}")
+            raise
+
+    def get_user_analyses(self, user_id: str) -> List[Dict]:
+        """Returns list of user's document analyses for sidebar."""
+        try:
+            response = self.supabase.table("document_analyses")\
+                .select("id, file_name, file_type, file_size, status, created_at")\
+                .eq("user_id", user_id)\
+                .eq("is_deleted", False)\
+                .order("created_at", desc=True)\
+                .execute()
+            return response.data or []
+        except Exception as e:
+            logger.error(f"Error fetching analyses: {e}")
+            return []
+
+    def get_analysis(self, analysis_id: str, user_id: str) -> Optional[Dict]:
+        """Returns a single analysis by ID, ensuring user owns it."""
+        try:
+            response = self.supabase.table("document_analyses")\
+                .select("*")\
+                .eq("id", analysis_id)\
+                .eq("user_id", user_id)\
+                .eq("is_deleted", False)\
+                .single()\
+                .execute()
+            return response.data
+        except Exception as e:
+            logger.error(f"Error fetching analysis: {e}")
+            return None
+
+    def delete_analysis(self, analysis_id: str, user_id: str) -> bool:
+        """Soft deletes a document analysis."""
+        try:
+            response = self.supabase.table("document_analyses")\
+                .update({"is_deleted": True})\
+                .eq("id", analysis_id)\
+                .eq("user_id", user_id)\
+                .execute()
+            return bool(response.data)
+        except Exception as e:
+            logger.error(f"Error deleting analysis: {e}")
+            return False
+
 db_service = DatabaseService()
