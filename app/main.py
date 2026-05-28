@@ -2,6 +2,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.chat import router as chat_router
 from app.api.judgement import router as judgement_router
+from app.api.document import router as document_router
 from app.logger import logger
 import time
 
@@ -48,6 +49,7 @@ async def log_requests(request: Request, call_next):
 # Include routers
 app.include_router(chat_router, prefix="/api")
 app.include_router(judgement_router, prefix="/api")
+app.include_router(document_router, prefix="/api")
 
 @app.on_event("startup")
 async def startup_event():
