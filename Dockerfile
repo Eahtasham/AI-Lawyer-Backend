@@ -6,10 +6,12 @@ WORKDIR /app
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Install system dependencies
+# Install system dependencies (includes Tesseract OCR + Poppler for PDF processing)
 RUN apt-get update && apt-get install -y \
     curl \
     build-essential \
+    tesseract-ocr \
+    poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements

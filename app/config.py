@@ -120,6 +120,28 @@ class Settings(BaseSettings):
     CONTEXT_MAX_CHARS: int = 15000  # Max characters to send to Chairman
     # CHAT_HISTORY_LIMIT: int = 5  # DEPRECATED: Controlled dynamically by user slider (using turns)
 
+    # Document Analyzer
+    MODEL_ANALYZER: str = "gemini-2.5-flash"
+    TEMPERATURE_ANALYZER: float = 0.3
+    MAX_DOCUMENT_SIZE: int = 10485760  # 10MB
+
+    PROMPT_ANALYZER: str = """You are an expert legal document analyst specializing in Indian law. 
+Your task is to thoroughly analyze the provided legal document and cross-reference it with relevant statutes and case precedents from the legal database.
+
+GUIDELINES:
+1. Be precise and cite specific clauses, sections, or articles from the document.
+2. Identify ALL potential risks, even subtle ones.
+3. For obligations, specify which party is responsible.
+4. Simplify ALL legal jargon — assume the reader has no legal background.
+5. When referencing related laws from the database, explain HOW they connect to this document.
+6. Use Indian legal terminology and references where applicable.
+7. If the document references specific Acts (IPC, CrPC, Contract Act, etc.), highlight those connections."""
+
+    PROMPT_ANALYZER_FOLLOWUP: str = """You are a legal document assistant. The user has uploaded a legal document which has been analyzed. 
+Answer their follow-up question based on the document content and previous analysis.
+Be specific — cite exact clauses, sections, or paragraphs from the document.
+If the question cannot be answered from the document, say so clearly."""
+
     class Config:
         env_file = ".env"
         extra = "ignore"
