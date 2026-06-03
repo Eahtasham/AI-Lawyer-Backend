@@ -13,11 +13,12 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str
     
     # Model Selection
-    MODEL_CLERK: str = "gemini-2.5-flash"
-    MODEL_STATUTORY: str = "gemini-2.5-flash"
-    MODEL_CASE_LAW: str = "gemini-2.5-flash"
-    MODEL_DEVIL: str = "gemini-2.5-flash"
-    MODEL_CHAIRMAN: str = "gemini-2.5-pro"
+    MODEL_CLERK: str = "gemini-3.5-flash"
+    MODEL_STATUTORY: str = "gemini-3.5-flash"
+    MODEL_CASE_LAW: str = "gemini-3.5-flash"
+    MODEL_DEVIL: str = "gemini-3.5-flash"
+    MODEL_CHAIRMAN: str = "gemini-3.5-flash"
+    MODEL_EVALUATOR: str = "gemini-3.5-flash"
     
     # OpenRouter (AI Council)
     OPENROUTER_API_KEY: str = ""

@@ -1,0 +1,22 @@
+[
+  {
+    "category": "Constitutional Law",
+    "query": "Does the right to privacy fall under Article 21 of the Indian Constitution? Cite the landmark judgment.",
+    "golden_answer": "Yes, the right to privacy is protected as an intrinsic part of the right to life and personal liberty under Article 21 of the Indian Constitution, as established in the landmark judgment of Justice K.S. Puttaswamy (Retd.) vs. Union of India (2017)."
+  },
+  {
+    "category": "Criminal Law",
+    "query": "What are the essential ingredients of murder under Section 300 of the IPC?",
+    "golden_answer": "Under Section 300 of the Indian Penal Code (IPC), culpable homicide is murder if the act is done with the intention of causing death, or with the intention of causing bodily injury likely to cause death, or with the knowledge that the act is so imminently dangerous that it must in all probability cause death."
+  },
+  {
+    "category": "Corporate Law",
+    "query": "Under the Companies Act, 2013, can a private limited company issue a prospectus to invite the public to subscribe to its shares?",
+    "golden_answer": "No, under Section 2(68) of the Companies Act, 2013, a private company is explicitly prohibited from making any invitation to the public to subscribe for any securities of the company."
+  },
+  {
+    "category": "Family Law",
+    "query": "What are the grounds for divorce under the Hindu Marriage Act, 1955?",
+    "golden_answer": "Under Section 13 of the Hindu Marriage Act, 1955, grounds for divorce include adultery, cruelty, desertion for a continuous period of not less than two years, conversion to another religion, mental disorder, venereal disease, renunciation of the world, and presumed death."
+  }
+]
