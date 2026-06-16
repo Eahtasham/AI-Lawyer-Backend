@@ -6,6 +6,7 @@ from app.config import settings
 from app.logger import logger
 from app.services.clerk import clerk_service, IntentType
 from app.services.qdrant import qdrant_service
+from app.services.retrieval import retrieval_service
 from app.models.schemas import ChatMode
 
 class CouncilService:
@@ -233,7 +234,7 @@ class CouncilService:
             logger.info(f"[Council] Scheduling Statutes Search (Qdrant Collection: indian_legal_docs)")
             logger.info(f"[Council] Search Query: {rewritten_query}")
             logger.info(f"[Council] Top-K: {settings.RAG_TOP_K}")
-            search_tasks.append(loop.run_in_executor(None, qdrant_service.search_statutes, rewritten_query))
+            search_tasks.append(loop.run_in_executor(None, retrieval_service.search_statutes, rewritten_query))
             search_types.append("Statutes")
             yield f"log: → Querying Statutes database (Indian Penal Code, CrPC, etc.)\n"
         else:
@@ -243,7 +244,7 @@ class CouncilService:
             logger.info(f"[Council] Scheduling Cases Search (Qdrant Collection: supreme_court_cases)")
             logger.info(f"[Council] Search Query: {rewritten_query}")
             logger.info(f"[Council] Top-K: {settings.RAG_TOP_K}")
-            search_tasks.append(loop.run_in_executor(None, qdrant_service.search_cases, rewritten_query))
+            search_tasks.append(loop.run_in_executor(None, retrieval_service.search_cases, rewritten_query))
             search_types.append("Cases")
             yield f"log: → Querying Case Law database (Supreme Court precedents)\n"
         else:

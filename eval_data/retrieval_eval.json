@@ -1,0 +1,22 @@
+[
+  {"query": "What is the punishment for theft?", "source_type": "statutes", "relevant_refs": ["theft", "section 378", "section 379"]},
+  {"query": "Punishment for murder under the penal code", "source_type": "statutes", "relevant_refs": ["murder", "section 300", "section 302"]},
+  {"query": "Definition and punishment of cheating", "source_type": "statutes", "relevant_refs": ["cheating", "section 415", "section 420"]},
+  {"query": "What is culpable homicide?", "source_type": "statutes", "relevant_refs": ["culpable homicide", "section 299", "section 304"]},
+  {"query": "Punishment for criminal breach of trust", "source_type": "statutes", "relevant_refs": ["criminal breach of trust", "section 405", "section 406"]},
+  {"query": "Grounds for divorce under Hindu law", "source_type": "statutes", "relevant_refs": ["divorce", "hindu marriage act", "section 13"]},
+  {"query": "Can a private company invite the public to subscribe to shares?", "source_type": "statutes", "relevant_refs": ["private company", "companies act", "prospectus"]},
+  {"query": "Essential elements of a valid contract", "source_type": "statutes", "relevant_refs": ["contract", "indian contract act", "free consent", "consideration"]},
+  {"query": "What is anticipatory bail?", "source_type": "statutes", "relevant_refs": ["anticipatory bail", "section 438", "bail"]},
+  {"query": "Maintenance of wife and children", "source_type": "statutes", "relevant_refs": ["maintenance", "section 125"]},
+  {"query": "Right to freedom of speech and expression", "source_type": "statutes", "relevant_refs": ["freedom of speech", "article 19", "expression"]},
+  {"query": "Equality before law", "source_type": "statutes", "relevant_refs": ["equality before law", "article 14", "equal protection"]},
+  {"query": "Protection of life and personal liberty", "source_type": "statutes", "relevant_refs": ["personal liberty", "article 21", "procedure established by law"]},
+  {"query": "Punishment for rape", "source_type": "statutes", "relevant_refs": ["rape", "section 375", "section 376"]},
+  {"query": "What constitutes defamation?", "source_type": "statutes", "relevant_refs": ["defamation", "section 499", "section 500"]},
+  {"query": "Dishonour of cheque for insufficiency of funds", "source_type": "statutes", "relevant_refs": ["cheque", "section 138", "negotiable instruments"]},
+  {"query": "Right to privacy as a fundamental right", "source_type": "cases", "relevant_refs": ["privacy", "puttaswamy", "article 21"]},
+  {"query": "Basic structure doctrine of the constitution", "source_type": "cases", "relevant_refs": ["basic structure", "kesavananda", "amend"]},
+  {"query": "Bail is the rule and jail is the exception", "source_type": "cases", "relevant_refs": ["bail", "personal liberty"]},
+  {"query": "Cases on dowry death and cruelty", "source_type": "cases", "relevant_refs": ["dowry", "cruelty", "section 498a", "section 304b"]}
+]
