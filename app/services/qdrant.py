@@ -167,6 +167,51 @@ class QdrantService:
             # Don't crash the whole chain, return empty
             return []
 
+    def _content_text(self, payload: dict, metadata: dict) -> str:
+        """Display text for a point (statute 'text', or synthesised case summary)."""
+        content_text = payload.get("text", "")
+        if not content_text and metadata.get("source_type") == "case_law":
+            summ = payload.get("summary", {})
+            if isinstance(summ, dict):
+                content_text = (f"HEADNOTE: {summ.get('executive_summary', '')}\n\n"
+                                f"FACTS: {summ.get('facts', '')}\n\n"
+                                f"HELD: {summ.get('judgment', '')}")
+        return content_text
+
+    def query_with_embedding(self, embedding: list, collection_name: str, top_k: int,
+                             with_vectors: bool = True) -> list:
+        """Dense search from a precomputed embedding, returning id + vector + content.
+
+        Used by the hybrid retriever (avoids re-embedding). Additive helper — does not
+        affect the existing search() path.
+        """
+        results = self.client.query_points(
+            collection_name=collection_name, query=embedding,
+            limit=top_k, with_vectors=with_vectors,
+        )
+        out = []
+        for point in results.points:
+            payload = point.payload or {}
+            metadata = self._normalize_metadata(payload)
+            out.append({
+                "id": point.id,
+                "score": point.score,
+                "vector": point.vector,
+                "text": self._content_text(payload, metadata),
+                "metadata": metadata,
+            })
+        return out
+
+    def fetch_vectors(self, ids: list, collection_name: str) -> dict:
+        """Batch-fetch vectors by point id. Returns {id: vector}."""
+        if not ids:
+            return {}
+        pts = self.client.retrieve(
+            collection_name=collection_name, ids=ids,
+            with_vectors=True, with_payload=False,
+        )
+        return {p.id: p.vector for p in pts}
+
     def search_statutes(self, query: str, top_k: int = None):
         """Helper for Statutes Collection"""
         if top_k is None:

@@ -110,6 +110,26 @@ class Settings(BaseSettings):
     # RAG Configuration
     RAG_TOP_K: int = 5  # Number of documents to retrieve from vector DB
     RAG_SCORE_THRESHOLD: float = 0.0  # Minimum similarity score (0.0 = no filtering)
+
+    # --- Hybrid Retrieval (Information Retrieval upgrade) ---
+    # "dense"  = current behaviour (Qdrant vector search only)
+    # "hybrid" = dense + BM25 fused with Reciprocal Rank Fusion, then MMR reranking
+    RETRIEVAL_MODE: str = "hybrid"
+    N_DENSE: int = 30          # candidates pulled from the dense (vector) retriever
+    N_SPARSE: int = 30         # candidates pulled from the BM25 (lexical) retriever
+    RRF_K: int = 60            # Reciprocal Rank Fusion constant
+    # MMR is implemented and benchmarked, but the IR eval showed RRF ranks legal
+    # provisions better (MMR's diversity penalty demotes near-duplicate sections),
+    # so the live hybrid path ranks by RRF by default. Flip USE_MMR to enable it.
+    USE_MMR: bool = False
+    MMR_LAMBDA: float = 0.7    # MMR relevance/diversity trade-off (1.0 = pure relevance)
+    MMR_POOL: int = 20         # size of the fused pool reranked/truncated to RAG_TOP_K
+    # Legal Authority Graph (PageRank) re-rank weight for CASES. 0.0 = disabled.
+    # final = (1 - AUTHORITY_WEIGHT) * relevance + AUTHORITY_WEIGHT * authority
+    AUTHORITY_WEIGHT: float = 0.0
+    # Artefact locations (built offline by scripts/). Missing files => safe fallback.
+    BM25_INDEX_DIR: str = "data"
+    AUTHORITY_SCORES_PATH: str = "data/authority_scores.json"
     
     # LLM Temperature Settings
     TEMPERATURE_CLERK: float = 0.3  # Low for structured routing

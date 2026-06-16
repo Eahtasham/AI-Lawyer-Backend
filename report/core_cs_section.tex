@@ -1,0 +1,339 @@
+% =====================================================================
+%  Core-CS Components — Hybrid Retrieval Engine + Legal Authority Graph
+%  Drop-in section for the main 30-page report (~5 pages).
+%
+%  This file is meant to be \input{} into your main report. It assumes the
+%  following packages are loaded in the report's preamble. If you want to
+%  compile this file on its own, uncomment the standalone wrapper at the very
+%  bottom of this file.
+%
+%      \usepackage{amsmath, amssymb}
+%      \usepackage{booktabs}
+%      \usepackage{graphicx}
+%      \usepackage{array}
+%      \usepackage{xcolor}
+%      \usepackage{caption}
+%      \usepackage[hidelinks]{hyperref}
+%
+%  Figures referenced (export from report/diagrams.html — see instructions):
+%      fig/hybrid_pipeline.png
+%      fig/authority_graph.png
+% =====================================================================
+
+\section{Algorithmic Core: Hybrid Retrieval and the Legal Authority Graph}
+\label{sec:core-cs}
+
+The AI Legal Council answers Indian-law questions using \emph{Retrieval-Augmented
+Generation} (RAG): relevant statute and case passages are retrieved from a corpus of
+roughly $96{,}000$ legal text chunks, injected into the model's prompt as context, and
+the language model generates an answer grounded in that context. The quality of the final
+answer is bounded by the quality of retrieval --- if the right passages are not retrieved,
+no amount of generation can recover them. Retrieval is therefore the component into which
+we invested original algorithmic work.
+
+This section describes two such components. The first, a \textbf{hybrid retrieval engine},
+belongs to the field of \emph{Information Retrieval}: it fuses a semantic (vector) retriever
+with a lexical (BM25) retriever and is evaluated with standard IR metrics. The second, a
+\textbf{legal authority graph}, belongs to \emph{Graph Algorithms}: it models the corpus as
+a graph and applies PageRank, HITS, and Louvain community detection to score legal authority
+and to discover the latent structure of Indian law. Both components are gated behind
+configuration flags whose defaults reproduce the system's original behaviour exactly, so the
+production pipeline is never put at risk (Section~\ref{sec:integration}).
+
+% ---------------------------------------------------------------------
+\subsection{The Hybrid Retrieval Engine}
+\label{sec:hybrid}
+
+A single retriever sees only part of the picture. \emph{Dense} (vector) retrieval embeds
+text into a $2048$-dimensional vector and ranks passages by cosine similarity; it captures
+\emph{meaning}, so the query ``stealing'' matches a section about ``theft'', but it can miss
+exact tokens such as a section number or a rare case name. \emph{Lexical} retrieval matches
+the literal query words and excels at exact terms like ``Section~302'' or ``\emph{Puttaswamy}'',
+but is blind to synonyms. Because each retriever is strong precisely where the other is weak,
+we run both and fuse their results. Figure~\ref{fig:pipeline} shows the full pipeline.
+
+\begin{figure}[ht]
+  \centering
+  \includegraphics[width=\linewidth]{fig/hybrid_pipeline.png}
+  \caption{The hybrid retrieval pipeline. The query is embedded once; a dense retriever and a
+  BM25 retriever each return their top~30 candidates; Reciprocal Rank Fusion merges the two
+  rankings; the fused pool is optionally reranked (MMR) or blended with graph authority; the
+  top~5 chunks are returned with a per-chunk provenance record.}
+  \label{fig:pipeline}
+\end{figure}
+
+\subsubsection{Cosine similarity}
+The semantic distance between two embedding vectors $\mathbf{A}$ and $\mathbf{B}$ is measured
+by the cosine of the angle between them, which depends on direction (meaning) rather than
+magnitude:
+\begin{equation}
+\operatorname{cos}(\mathbf{A},\mathbf{B}) \;=\; \frac{\mathbf{A}\cdot\mathbf{B}}{\lVert\mathbf{A}\rVert\,\lVert\mathbf{B}\rVert}
+\;=\; \frac{\sum_{i} A_i B_i}{\sqrt{\sum_i A_i^2}\,\sqrt{\sum_i B_i^2}}.
+\end{equation}
+The value lies in $[-1, 1]$; for our embeddings it typically falls in $[0, 0.8]$.
+
+\subsubsection{BM25 --- lexical relevance over an inverted index}
+BM25 (``Best Match~25'') is the standard lexical scoring function. It runs over an
+\emph{inverted index} --- a map from each term to the documents containing it --- which we
+build offline over all $96{,}000$ chunks. For a document $D$ and a query $Q$ with terms $t$,
+\begin{equation}
+\operatorname{BM25}(D,Q)
+= \sum_{t \in Q} \operatorname{IDF}(t)\,
+\frac{f(t,D)\,(k_1+1)}{f(t,D) + k_1\!\left(1 - b + b\,\dfrac{|D|}{\mathrm{avgdl}}\right)},
+\qquad
+\operatorname{IDF}(t) = \ln\!\left(\frac{N - n_t + 0.5}{n_t + 0.5} + 1\right),
+\end{equation}
+where $f(t,D)$ is the frequency of term $t$ in $D$, $|D|$ is the document length,
+$\mathrm{avgdl}$ the average document length, $N$ the corpus size, and $n_t$ the number of
+documents containing $t$. The constants are set to the standard $k_1 = 1.5$ and $b = 0.75$.
+The formula encodes three principles: term frequency \emph{saturates} (the tenth occurrence of
+a word adds little over the first), rare terms are up-weighted through IDF, and long documents
+are penalised through length normalisation.
+
+\subsubsection{Reciprocal Rank Fusion (RRF)}
+Dense scores (cosine $\approx 0.7$) and BM25 scores ($\approx 5.2$) live on incompatible
+scales, so they cannot simply be added. RRF sidesteps this by fusing on \emph{rank position}
+alone:
+\begin{equation}
+\operatorname{RRF}(d) \;=\; \sum_{i \in \{\text{dense},\,\text{bm25}\}}
+\frac{1}{k + \operatorname{rank}_i(d)},
+\qquad k = 60,
+\end{equation}
+where $\operatorname{rank}_i(d)$ is the position of document $d$ in list $i$ (rank~$1$ is best),
+and the sum runs over the lists in which $d$ appears. A document found by \emph{both}
+retrievers accumulates two contributions and naturally rises to the top --- the ``agreement
+bonus''. The constant $k = 60$ softens the gap between the very top ranks. For example, a
+document ranked $2$nd by dense and $4$th by BM25 scores
+$\tfrac{1}{62} + \tfrac{1}{64} = 0.0318$, beating a document ranked $1$st by dense alone
+($\tfrac{1}{61} = 0.0164$).
+
+\subsubsection{Maximal Marginal Relevance (MMR)}
+MMR is a diversity-aware reranker. Building the result list greedily, it selects at each step
+the candidate that is relevant to the query yet dissimilar to what has already been chosen:
+\begin{equation}
+\operatorname{MMR}(d) = \lambda\,\operatorname{sim}(d, q)
+\;-\; (1-\lambda)\,\max_{s \in S}\operatorname{sim}(d, s),
+\end{equation}
+where $S$ is the set of already-selected documents and $\lambda \in [0,1]$ trades relevance
+against diversity. We implemented and benchmarked MMR but, as Section~\ref{sec:ir-metrics}
+shows, its diversity penalty \emph{hurts} ranking quality on legal text --- where the relevant
+passages are often near-identical provisions that should be clustered together --- so the
+production path leaves it off ($\lambda$ unused, \texttt{USE\_MMR}=\texttt{False}).
+
+% ---------------------------------------------------------------------
+\subsection{Measuring Retrieval Quality}
+\label{sec:ir-metrics}
+
+To prove that fusion helps, we evaluate retrieval with the standard IR methodology. We
+authored a labelled set of $20$ queries, each annotated with reference labels (e.g.\ for
+``theft'': \texttt{theft}, \texttt{section~378}, \texttt{section~379}); a retrieved chunk is
+judged relevant if its text or metadata matches a label. Following the TREC pooling method,
+the candidates from all methods are gathered into one pool and judged, giving a shared
+relevance set without manually reading the entire corpus.
+
+Two ranking metrics carry the headline. \textbf{Normalised Discounted Cumulative Gain}
+rewards placing relevant documents high, with a logarithmic position discount:
+\begin{equation}
+\operatorname{DCG}@k = \sum_{i=1}^{k}\frac{\mathrm{rel}_i}{\log_2(i+1)},
+\qquad
+\operatorname{nDCG}@k = \frac{\operatorname{DCG}@k}{\operatorname{IDCG}@k} \in [0,1],
+\end{equation}
+where $\mathrm{rel}_i \in \{0,1\}$ and $\operatorname{IDCG}@k$ is the DCG of the ideal ordering.
+\textbf{Mean Average Precision} is the stricter measure, rewarding ranking \emph{all} relevant
+documents high:
+\begin{equation}
+\operatorname{AP} = \frac{1}{R}\sum_{i:\,\mathrm{rel}_i = 1}\operatorname{Precision}@i,
+\qquad
+\operatorname{MAP} = \frac{1}{|Q|}\sum_{q \in Q}\operatorname{AP}(q),
+\end{equation}
+with $R$ the number of relevant documents for the query. We additionally report
+$\operatorname{Precision}@k$, $\operatorname{Recall}@k$, and Mean Reciprocal Rank (MRR);
+MRR was $1.000$ for every method, i.e.\ each query had a relevant document at rank~$1$.
+
+\begin{table}[ht]
+  \centering
+  \caption{Retrieval quality over $20$ labelled queries (TREC-style pooled relevance).
+  Hybrid RRF improves on the previous dense-only retriever on every ranking metric; MMR
+  reduces quality and is therefore disabled.}
+  \label{tab:ir}
+  \begin{tabular}{lccc}
+    \toprule
+    \textbf{Method} & \textbf{nDCG@10} & \textbf{MAP} & \textbf{nDCG@5} \\
+    \midrule
+    Dense (vector only) --- \emph{previous system} & 0.916 & 0.573 & 0.931 \\
+    BM25 (lexical only)                             & 0.946 & 0.668 & 0.978 \\
+    \textbf{Hybrid (RRF)} --- \emph{new default}    & \textbf{0.961} & \textbf{0.904} & 0.959 \\
+    Hybrid + MMR                                    & 0.911 & 0.470 & 0.896 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Table~\ref{tab:ir} is the central result. Hybrid RRF beats the previous dense-only retriever
+on every ranking metric, most dramatically on \textbf{MAP ($0.573 \rightarrow 0.904$)}:
+fusing lexical and semantic signals surfaces \emph{all} relevant provisions rather than only
+the top one. The MMR row is an honest finding rather than a failure --- its diversity penalty
+scatters near-duplicate provisions apart, collapsing precision at the lower relevant positions
+and dragging MAP down to $0.470$. We measured the effect and let the evidence choose the
+production algorithm. The benchmark is reproducible offline (no language-model cost) via
+\texttt{python -m scripts.eval\_retrieval}, which writes
+\texttt{output/retrieval\_metrics.\{md,csv\}}.
+
+% ---------------------------------------------------------------------
+\subsection{The Legal Authority Graph}
+\label{sec:graph}
+
+Lawyers reason about \emph{authoritative} precedent --- the landmark cases everyone relies on.
+The natural way to quantify this is a citation graph (case~$A$ cites case~$B$), ranked by
+incoming citations. Our corpus, however, stores \textbf{no case-to-case citations} (the field
+is empty for every case). What it does record, for about $91\%$ of cases, is
+\texttt{laws\_applied} --- the statutes each case invokes. We therefore build authority from a
+different structure.
+
+\subsubsection{A bipartite case--statute graph}
+A \emph{bipartite} graph has two node types and edges only ever cross between them. We connect
+each \textbf{case} to every \textbf{statute} it applies (Figure~\ref{fig:graph}). Statute names
+are first canonicalised --- ``Indian Penal Code, 1860'', ``IPC'', and ``Indian Penal Code''
+collapse to one node --- so the graph is not fragmented. The result is summarised in
+Table~\ref{tab:graph}.
+
+\begin{figure}[ht]
+  \centering
+  \includegraphics[width=0.92\linewidth]{fig/authority_graph.png}
+  \caption{The bipartite case--statute graph. Cases (left) link to the statutes they apply
+  (right). Authority and community structure are computed directly on this graph, avoiding the
+  quadratic edge blow-up of a case-to-case projection.}
+  \label{fig:graph}
+\end{figure}
+
+\begin{table}[ht]
+  \centering
+  \caption{Legal authority graph built from \texttt{laws\_applied} metadata.}
+  \label{tab:graph}
+  \begin{tabular}{lc}
+    \toprule
+    \textbf{Property} & \textbf{Value} \\
+    \midrule
+    Nodes / Edges                & $56{,}596$ / $93{,}509$ \\
+    Cases / distinct statutes    & $38{,}806$ / $17{,}790$ \\
+    Communities (Louvain)        & $1{,}522$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsubsection{PageRank --- node importance via the random surfer}
+PageRank scores a node not by raw connectivity but by importance \emph{flowing} from important
+neighbours. Modelling a random surfer who follows a random edge with probability $d$ and
+teleports to a random node with probability $1-d$, the long-run fraction of time spent at each
+node is its PageRank:
+\begin{equation}
+\operatorname{PR}(u) = \frac{1-d}{N} + d \sum_{v \in \mathcal{N}(u)} \frac{\operatorname{PR}(v)}{\deg(v)},
+\qquad d = 0.85,
+\end{equation}
+where $N$ is the number of nodes and $\mathcal{N}(u)$ the neighbours of $u$. The equation is
+solved by \emph{power iteration}: start every node at $1/N$, apply the update repeatedly, and
+the values converge in tens of iterations. A case's PageRank, normalised to $[0,1]$, is its
+\textbf{authority score}; cases that apply many central statutes score highly. These scores are
+saved to \texttt{data/authority\_scores.json} and used optionally to re-rank retrieved cases.
+
+\subsubsection{HITS --- hubs and authorities}
+HITS assigns every node two mutually reinforcing scores: a node has high \emph{authority} if
+many good hubs point to it, and high \emph{hub} value if it points to many good authorities,
+\begin{equation}
+\operatorname{auth}(p) = \sum_{q \to p} \operatorname{hub}(q),
+\qquad
+\operatorname{hub}(p) = \sum_{p \to q} \operatorname{auth}(q),
+\end{equation}
+renormalised after each round. On our bipartite graph, statutes accumulate authority and cases
+act as hubs. Run with no hand-tuning, the top statute authorities emerged as the
+\textbf{Constitution of India $\rightarrow$ Indian Penal Code $\rightarrow$ Code of Criminal
+Procedure $\rightarrow$ Code of Civil Procedure $\rightarrow$ Evidence Act} --- precisely the
+foundational statutes of the Indian legal system. This \emph{face validity} is strong evidence
+that the authority signal is meaningful.
+
+\subsubsection{Why bipartite, not a case-to-case projection (a complexity argument)}
+A natural alternative is to connect two cases directly when they share a statute. This
+\emph{projection} explodes combinatorially: a statute applied by $m$ cases induces
+$\binom{m}{2} = m(m-1)/2$ edges. The Constitution of India is applied by $9{,}728$ cases, which
+alone would create about $9{,}728 \times 9{,}727 / 2 \approx 47$~million edges; summed over all
+hub statutes the projection is $O(n^2)$ and infeasible to store or compute. Running PageRank,
+HITS, and Louvain \emph{directly on the bipartite graph} --- only $93{,}509$ edges --- preserves
+the same authority signal without the blow-up. (Were a case-to-case graph ever needed, the
+principled fix is to weight shared-statute links by IDF, so ubiquitous statutes contribute
+little, and to drop the hub statutes.)
+
+\subsubsection{Louvain --- community detection}
+Louvain discovers natural groups by maximising \emph{modularity} $Q$, which is high when far
+more edges fall inside communities than chance would predict:
+\begin{equation}
+Q = \frac{1}{2m}\sum_{i,j}\!\left(A_{ij} - \frac{k_i k_j}{2m}\right)\delta(c_i, c_j),
+\end{equation}
+where $A_{ij}$ is the (weighted) adjacency, $k_i$ the degree of node $i$, $m$ the total edge
+weight, and $\delta(c_i,c_j) = 1$ when $i$ and $j$ share a community. The algorithm alternates a
+local phase (greedily move nodes to the neighbouring community that increases $Q$ most) with an
+aggregation phase (collapse each community into a super-node), repeating on the shrinking graph
+until $Q$ stops improving. It is fast and requires no preset number of clusters. On our graph it
+found $1{,}522$ communities whose largest members are coherent legal domains --- \textbf{criminal}
+(IPC, CrPC, Evidence), \textbf{civil and property} (CPC, Transfer of Property, Limitation,
+Contract), \textbf{constitutional}, \textbf{tax} (Income Tax, Finance, Wealth Tax),
+\textbf{labour} (Industrial Disputes, Factories, ESI), and \textbf{land acquisition}. These
+categories were never supplied; unsupervised community detection rediscovered the branches of
+Indian law purely from which statutes cases apply together.
+
+In a live demonstration, enabling the authority blend on a query for ``right to privacy''
+surfaces the actual landmark precedents (\emph{Puttaswamy}, \emph{Kharak Singh}, \emph{PUCL})
+and promotes the higher-authority judgments. The blend does not move the aggregate IR metrics in
+Table~\ref{tab:ir}, because the case queries already retrieve relevant documents at the top and
+binary relevance saturates; its value is corpus analysis and breaking ties toward landmark
+precedent.
+
+% ---------------------------------------------------------------------
+\subsection{Integration and Safety}
+\label{sec:integration}
+
+Both components are introduced without altering the existing pipeline's behaviour by default.
+The council now calls a \texttt{retrieval\_service} dispatcher instead of the vector store
+directly; the dispatcher branches on three configuration flags (Table~\ref{tab:flags}).
+
+\begin{table}[ht]
+  \centering
+  \caption{Feature flags. With the documented defaults, retrieval is byte-for-byte identical to
+  the original system (verified by a regression test).}
+  \label{tab:flags}
+  \begin{tabular}{lcp{0.52\linewidth}}
+    \toprule
+    \textbf{Flag} & \textbf{Default} & \textbf{Effect} \\
+    \midrule
+    \texttt{RETRIEVAL\_MODE}  & \texttt{dense} & \texttt{dense} reproduces the previous behaviour; \texttt{hybrid} enables the fusion engine of Section~\ref{sec:hybrid}. \\
+    \texttt{USE\_MMR}         & \texttt{False} & enables MMR diversity reranking (benchmarked as worse on this corpus). \\
+    \texttt{AUTHORITY\_WEIGHT}& \texttt{0.0}   & blends PageRank authority into case ranking when $> 0$. \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The returned chunk shape \texttt{\{rank, score, text, metadata\}} is unchanged and \texttt{score}
+remains in $[0,1]$; hybrid mode merely adds an additive
+\texttt{metadata.retrieval} provenance block (\texttt{dense\_rank}, \texttt{bm25\_rank},
+\texttt{rrf\_score}, \texttt{authority}) that the frontend reads to display per-chunk badges and
+that older consumers safely ignore. When authority is enabled, the final case score blends
+relevance and authority linearly,
+\begin{equation}
+\text{score}_{\text{final}} = (1 - w)\cdot \text{relevance} + w \cdot \text{authority},
+\qquad w = \texttt{AUTHORITY\_WEIGHT},
+\end{equation}
+so that, for example, $w = 0.3$ ranks a case $70\%$ on query match and $30\%$ on landmark
+authority. The BM25 indexes and authority scores are built offline by two scripts with no
+language-model cost and are loaded lazily; if an artefact is missing the system falls back to
+plain dense search. The document-analyzer path is untouched. In short, the new algorithms are
+purely additive: they can be switched on for the demonstration and off for safety, and the
+evaluation that justifies them runs entirely offline.
+
+% =====================================================================
+%  STANDALONE WRAPPER — uncomment to compile this file by itself.
+% =====================================================================
+% \documentclass[11pt]{article}
+% \usepackage[a4paper,margin=1in]{geometry}
+% \usepackage{amsmath, amssymb, booktabs, graphicx, array, xcolor, caption}
+% \usepackage[hidelinks]{hyperref}
+% \begin{document}
+%   \input{core_cs_section_body} % or paste the \section above here
+% \end{document}

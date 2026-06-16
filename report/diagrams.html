@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Report Figures — Hybrid Retrieval & Legal Authority Graph</title>
+<style>
+  :root{
+    --ink:#1a2233; --muted:#5b6577; --line:#c7d0dd; --bg:#ffffff;
+    --dense:#2563eb; --denseBg:#eaf1ff;
+    --bm25:#0d9488; --bm25Bg:#e3f7f3;
+    --fuse:#7c3aed; --fuseBg:#f1e9ff;
+    --rank:#b45309; --rankBg:#fdf3e3;
+    --final:#15803d; --finalBg:#e9f7ee;
+    --caseC:#2563eb; --caseBg:#eaf1ff;
+    --statC:#b45309; --statBg:#fdf3e3;
+  }
+  *{box-sizing:border-box}
+  body{
+    font-family:"Segoe UI",-apple-system,Roboto,Helvetica,Arial,sans-serif;
+    color:var(--ink); background:#eef1f6; margin:0; padding:32px;
+  }
+  .sheet{
+    background:var(--bg); width:1040px; margin:0 auto 40px; padding:34px 40px 40px;
+    border-radius:10px; box-shadow:0 2px 18px rgba(20,30,55,.10);
+  }
+  h2.figtitle{
+    font-size:19px; margin:0 0 4px; letter-spacing:.2px;
+  }
+  p.figsub{ color:var(--muted); font-size:13.5px; margin:0 0 26px; }
+  .hint{
+    max-width:1040px; margin:0 auto 22px; color:#445; font-size:13px;
+    background:#fffce8; border:1px solid #e7e0a8; border-radius:8px; padding:10px 14px;
+  }
+
+  /* ---------- Pipeline ---------- */
+  .pipe{ display:flex; align-items:stretch; gap:0; }
+  .col{ display:flex; flex-direction:column; justify-content:center; gap:14px; }
+  .arrowcol{ display:flex; flex-direction:column; justify-content:center; align-items:center; padding:0 8px; min-width:54px; }
+  .box{
+    border:1.6px solid var(--line); border-radius:11px; padding:12px 14px;
+    background:#fff; min-width:150px; text-align:center;
+  }
+  .box .t{ font-weight:700; font-size:14.5px; }
+  .box .s{ font-size:11.7px; color:var(--muted); margin-top:3px; line-height:1.35; }
+  .tag{ display:inline-block; font-size:10.5px; font-weight:700; letter-spacing:.4px;
+        padding:2px 8px; border-radius:20px; margin-bottom:6px; }
+  .b-query{ border-color:#9aa6b8; background:#f6f8fc; }
+  .b-dense{ border-color:var(--dense); background:var(--denseBg); }
+  .b-dense .tag{ color:#fff; background:var(--dense); }
+  .b-bm25{ border-color:var(--bm25); background:var(--bm25Bg); }
+  .b-bm25 .tag{ color:#fff; background:var(--bm25); }
+  .b-fuse{ border-color:var(--fuse); background:var(--fuseBg); }
+  .b-fuse .tag{ color:#fff; background:var(--fuse); }
+  .b-rank{ border-color:var(--rank); background:var(--rankBg); }
+  .b-rank .tag{ color:#fff; background:var(--rank); }
+  .b-final{ border-color:var(--final); background:var(--finalBg); }
+  .b-final .tag{ color:#fff; background:var(--final); }
+  .arrow{ font-size:24px; color:#90a; line-height:1; }
+  .arrow.grey{ color:#9aa6b8; }
+  .lbl{ font-size:10.5px; color:var(--muted); margin-top:4px; text-align:center; max-width:60px; }
+  .opt{ font-size:10.5px; color:var(--rank); font-style:italic; margin-top:6px; }
+  .legend{ display:flex; gap:18px; flex-wrap:wrap; margin-top:26px; padding-top:16px; border-top:1px dashed var(--line); font-size:12px; color:#445; }
+  .legend span{ display:inline-flex; align-items:center; gap:6px; }
+  .dot{ width:11px; height:11px; border-radius:3px; display:inline-block; }
+
+  /* ---------- Bipartite graph ---------- */
+  .graphwrap{ position:relative; }
+  svg{ display:block; width:100%; height:auto; }
+  .node-lbl{ font:600 13px "Segoe UI",sans-serif; fill:var(--ink); }
+  .node-sub{ font:11px "Segoe UI",sans-serif; fill:var(--muted); }
+  .colhdr{ font:800 13px "Segoe UI",sans-serif; letter-spacing:.5px; }
+  .formula{ margin-top:18px; font-size:12.5px; color:#445; background:#f6f8fc;
+            border:1px solid var(--line); border-radius:8px; padding:10px 14px; }
+  .formula code{ font-family:"Cascadia Code",Consolas,monospace; color:#5b21b6; }
+</style>
+</head>
+<body>
+
+<div class="hint">
+  <b>How to use:</b> open this file in a browser. For each white card below, zoom to taste,
+  then screenshot just the card and save as
+  <code>report/fig/hybrid_pipeline.png</code> and <code>report/fig/authority_graph.png</code>.
+  (Or right-click → "Capture node screenshot" in Chrome DevTools on the <code>.sheet</code> element.)
+  The same images work in the LaTeX report and in slides.
+</div>
+
+<!-- ============== FIGURE 1: PIPELINE ============== -->
+<div class="sheet" id="fig-pipeline">
+  <h2 class="figtitle">Hybrid Retrieval Pipeline</h2>
+  <p class="figsub">Dense (semantic) + BM25 (lexical) retrieval, fused by Reciprocal Rank Fusion, then ranked and returned with provenance.</p>
+
+  <div class="pipe">
+    <!-- query -->
+    <div class="col">
+      <div class="box b-query">
+        <div class="t">Query</div>
+        <div class="s">embedded once<br>(2048-dim vector)</div>
+      </div>
+    </div>
+
+    <div class="arrowcol">
+      <div class="arrow grey">&#8594;</div>
+    </div>
+
+    <!-- two retrievers -->
+    <div class="col">
+      <div class="box b-dense">
+        <span class="tag">SEMANTIC</span>
+        <div class="t">Dense Retriever</div>
+        <div class="s">Qdrant vector search<br>cosine similarity &middot; top&nbsp;30</div>
+      </div>
+      <div class="box b-bm25">
+        <span class="tag">LEXICAL</span>
+        <div class="t">BM25 Retriever</div>
+        <div class="s">inverted index<br>TF&middot;IDF&middot;length &middot; top&nbsp;30</div>
+      </div>
+    </div>
+
+    <div class="arrowcol">
+      <div class="arrow">&#8594;</div>
+      <div class="lbl">two ranked lists</div>
+    </div>
+
+    <!-- fusion -->
+    <div class="col">
+      <div class="box b-fuse">
+        <span class="tag">FUSE</span>
+        <div class="t">Reciprocal Rank Fusion</div>
+        <div class="s">&Sigma; 1/(k+rank), k=60<br>agreement &rarr; top of list</div>
+      </div>
+    </div>
+
+    <div class="arrowcol">
+      <div class="arrow">&#8594;</div>
+      <div class="lbl">pool of ~20</div>
+    </div>
+
+    <!-- rerank -->
+    <div class="col">
+      <div class="box b-rank">
+        <span class="tag">RERANK</span>
+        <div class="t">RRF order</div>
+        <div class="s">relevance score in [0,1]</div>
+        <div class="opt">+ optional MMR (off)<br>+ optional Authority blend</div>
+      </div>
+    </div>
+
+    <div class="arrowcol">
+      <div class="arrow">&#8594;</div>
+    </div>
+
+    <!-- final -->
+    <div class="col">
+      <div class="box b-final">
+        <span class="tag">OUTPUT</span>
+        <div class="t">Top 5 chunks</div>
+        <div class="s">{rank, score, text, metadata}<br>+ provenance:<br>dense_rank, bm25_rank,<br>rrf_score, authority</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <span><i class="dot" style="background:var(--dense)"></i> Dense / semantic</span>
+    <span><i class="dot" style="background:var(--bm25)"></i> BM25 / lexical</span>
+    <span><i class="dot" style="background:var(--fuse)"></i> Rank fusion (RRF)</span>
+    <span><i class="dot" style="background:var(--rank)"></i> Rerank (RRF &middot; MMR &middot; authority)</span>
+    <span><i class="dot" style="background:var(--final)"></i> Returned to the Council</span>
+  </div>
+</div>
+
+<!-- ============== FIGURE 2: BIPARTITE GRAPH ============== -->
+<div class="sheet" id="fig-graph">
+  <h2 class="figtitle">Legal Authority Graph (case &harr; statute, bipartite)</h2>
+  <p class="figsub">Each case links to the statutes it applies. PageRank / HITS / Louvain run directly on this graph &mdash; 56,596 nodes, 93,509 edges.</p>
+
+  <div class="graphwrap">
+    <svg viewBox="0 0 960 430" role="img" aria-label="Bipartite case-statute graph">
+      <!-- column headers -->
+      <text x="170" y="34" text-anchor="middle" class="colhdr" fill="#2563eb">CASES (38,806)</text>
+      <text x="770" y="34" text-anchor="middle" class="colhdr" fill="#b45309">STATUTES (17,790)</text>
+
+      <!-- edges (drawn first, behind nodes) -->
+      <g stroke-linecap="round" fill="none">
+        <!-- Puttaswamy -> Constitution -->
+        <path d="M300 100 C 480 100, 560 95, 640 95" stroke="#9bb4e8" stroke-width="2.4"/>
+        <!-- Kharak Singh -> Constitution -->
+        <path d="M300 170 C 480 150, 560 110, 640 100" stroke="#9bb4e8" stroke-width="2.4"/>
+        <!-- Kharak Singh -> CrPC -->
+        <path d="M300 175 C 470 230, 560 250, 640 250" stroke="#e0bd8a" stroke-width="1.8"/>
+        <!-- Criminal case -> IPC -->
+        <path d="M300 250 C 470 200, 560 185, 640 175" stroke="#e0bd8a" stroke-width="2.4"/>
+        <!-- Criminal case -> CrPC -->
+        <path d="M300 255 C 470 255, 560 252, 640 250" stroke="#e0bd8a" stroke-width="2.4"/>
+        <!-- Criminal case -> Evidence -->
+        <path d="M300 260 C 470 300, 560 320, 640 330" stroke="#e0bd8a" stroke-width="1.8"/>
+        <!-- Tax case -> Income Tax -->
+        <path d="M300 330 C 470 360, 560 395, 640 405" stroke="#e0bd8a" stroke-width="2.4"/>
+        <!-- Tax case -> Constitution (light) -->
+        <path d="M300 335 C 470 260, 560 140, 640 100" stroke="#cdd8ea" stroke-width="1.4"/>
+      </g>
+
+      <!-- case nodes (left) -->
+      <g>
+        <g transform="translate(170,100)">
+          <circle r="13" fill="#eaf1ff" stroke="#2563eb" stroke-width="2.2"/>
+          <text x="20" y="-2" class="node-lbl">Puttaswamy (2017)</text>
+          <text x="20" y="13" class="node-sub">right to privacy</text>
+        </g>
+        <g transform="translate(170,172)">
+          <circle r="12" fill="#eaf1ff" stroke="#2563eb" stroke-width="2"/>
+          <text x="20" y="-2" class="node-lbl">Kharak Singh</text>
+          <text x="20" y="13" class="node-sub">surveillance</text>
+        </g>
+        <g transform="translate(170,255)">
+          <circle r="12" fill="#eaf1ff" stroke="#2563eb" stroke-width="2"/>
+          <text x="20" y="-2" class="node-lbl">A criminal appeal</text>
+          <text x="20" y="13" class="node-sub">theft / offence</text>
+        </g>
+        <g transform="translate(170,332)">
+          <circle r="12" fill="#eaf1ff" stroke="#2563eb" stroke-width="2"/>
+          <text x="20" y="-2" class="node-lbl">A tax matter</text>
+          <text x="20" y="13" class="node-sub">assessment</text>
+        </g>
+      </g>
+
+      <!-- statute nodes (right) — radius scales with authority (degree) -->
+      <g>
+        <g transform="translate(770,98)">
+          <circle r="22" fill="#fdf3e3" stroke="#b45309" stroke-width="2.6"/>
+          <text x="30" y="-3" class="node-lbl">Constitution of India</text>
+          <text x="30" y="13" class="node-sub">applied by 9,728 cases &mdash; top authority</text>
+        </g>
+        <g transform="translate(770,175)">
+          <circle r="17" fill="#fdf3e3" stroke="#b45309" stroke-width="2.4"/>
+          <text x="26" y="-3" class="node-lbl">Indian Penal Code</text>
+          <text x="26" y="13" class="node-sub">criminal</text>
+        </g>
+        <g transform="translate(770,250)">
+          <circle r="15" fill="#fdf3e3" stroke="#b45309" stroke-width="2.2"/>
+          <text x="24" y="-3" class="node-lbl">Code of Criminal Procedure</text>
+          <text x="24" y="13" class="node-sub">criminal</text>
+        </g>
+        <g transform="translate(770,330)">
+          <circle r="12" fill="#fdf3e3" stroke="#b45309" stroke-width="2"/>
+          <text x="22" y="-3" class="node-lbl">Evidence Act</text>
+          <text x="22" y="13" class="node-sub">criminal</text>
+        </g>
+        <g transform="translate(770,405)">
+          <circle r="12" fill="#fdf3e3" stroke="#b45309" stroke-width="2"/>
+          <text x="22" y="-3" class="node-lbl">Income Tax Act</text>
+          <text x="22" y="13" class="node-sub">tax</text>
+        </g>
+      </g>
+    </svg>
+  </div>
+
+  <div class="formula">
+    Node size &prop; authority. <b>HITS</b> ranks statute authority as
+    <code>Constitution &rarr; IPC &rarr; CrPC &rarr; CPC &rarr; Evidence Act</code> (face validity).
+    <b>PageRank</b> scores each case's authority; <b>Louvain</b> recovers 1,522 communities &mdash;
+    criminal, civil, constitutional, tax, labour, land &mdash; with no supervision.
+  </div>
+</div>
+
+</body>
+</html>
